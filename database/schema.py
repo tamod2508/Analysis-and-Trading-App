@@ -129,7 +129,7 @@ class HDF5Structure:
     ├── instruments/
     │   ├── NSE/        (equity instruments only)
     │   └── BSE/
-    └── historical/
+    └── data/
         └── {exchange}/
             └── {symbol}/
                 ├── 15minute/  (dataset with start_date, end_date, row_count, updated_at attributes)
@@ -144,7 +144,7 @@ class HDF5Structure:
     # Root groups
     ROOT_GROUPS = [
         '/instruments',
-        '/historical',
+        '/data',
     ]
     
     # Exchange groups (equity only)
@@ -156,7 +156,7 @@ class HDF5Structure:
         return f'/instruments/{exchange.upper()}'
     
     @staticmethod
-    def get_historical_path(exchange: str, symbol: str, interval: str) -> str:
+    def get_data_path(exchange: str, symbol: str, interval: str) -> str:
         """
         Get path for historical OHLCV data
         
@@ -171,10 +171,10 @@ class HDF5Structure:
         exchange = exchange.upper()
         # Clean symbol name
         symbol = symbol.upper().replace('&', '_').replace('-', '_').replace(' ', '_')
-        return f'/historical/{exchange}/{symbol}/{interval}'
+        return f'/data/{exchange}/{symbol}/{interval}'
     
     @staticmethod
-    def parse_historical_path(path: str) -> Tuple[str, str, str]:
+    def parse_data_path(path: str) -> Tuple[str, str, str]:
         """
         Parse a historical data path
         
@@ -185,9 +185,9 @@ class HDF5Structure:
             (exchange, symbol, interval)
         """
         parts = path.strip('/').split('/')
-        if len(parts) >= 4 and parts[0] == 'historical':
+        if len(parts) >= 4 and parts[0] == 'data':
             return parts[1], parts[2], parts[3]
-        raise ValueError(f"Invalid historical path: {path}")
+        raise ValueError(f"Invalid data path: {path}")
     
     @staticmethod
     def get_metadata_path(key: str) -> str:
@@ -431,40 +431,7 @@ def ohlcv_array_to_dict(data: np.ndarray) -> List[Dict]:
     
     return result
 
-
-# ============================================================================
-# MULTI-TIMEFRAME HELPERS
-# ============================================================================
-
-def get_expected_candle_count(interval: Interval, days: int) -> int:
-    """
-    Calculate expected number of candles for a time period
-    
-    Args:
-        interval: Candle interval
-        days: Number of trading days
-    
-    Returns:
-        Expected candle count
-    """
-    # Approximate trading minutes per day: 375 (9:15 AM - 3:30 PM)
-    candles_per_day = {
-        Interval.DAY: 1,
-        Interval.MINUTE_60: 6,      # ~375 / 60
-        Interval.MINUTE_30: 12,     # ~375 / 30
-        Interval.MINUTE_15: 25,     # ~375 / 15
-        Interval.MINUTE_10: 37,     # ~375 / 10
-        Interval.MINUTE_5: 75,      # ~375 / 5
-        Interval.MINUTE_3: 125,     # ~375 / 3
-        Interval.MINUTE: 375,       # All minutes
-    }
-    
-    return candles_per_day.get(interval, 1) * days
-
-
-# ============================================================================
 # SCHEMA VERSION
-# ============================================================================
 
 SCHEMA_VERSION = '1.0'
 COMPATIBLE_VERSIONS = ['1.0']
