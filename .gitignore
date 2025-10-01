@@ -1,0 +1,72 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment variables (CRITICAL - contains API keys!)
+.env
+*.env
+
+# Data files (HDF5 databases can be large)
+*.h5
+*.hdf5
+data/*.h5
+data/backups/*.h5
+
+# Exports (generated files)
+exports/csv/*.csv
+exports/reports/*.pdf
+exports/charts/*.png
+exports/charts/*.jpg
+
+# Logs
+logs/*.log
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Jupyter Notebooks (if you add them later)
+.ipynb_checkpoints/
+*.ipynb
+
+# Virtual environment
+venv/
+ENV/
+env/
+EOF
