@@ -1,0 +1,24 @@
+# Core dependencies (updated for M1 compatibility)
+streamlit>=1.30.0
+pandas>=2.2.0
+numpy>=1.26.0
+h5py>=3.10.0
+
+# API client
+kiteconnect>=4.2.0
+requests>=2.31.0
+
+# Visualization
+plotly>=5.18.0
+matplotlib>=3.8.0
+
+# Data processing
+python-dateutil>=2.8.2
+pytz>=2024.1
+
+# System utilities
+psutil>=5.9.5
+python-dotenv>=1.0.0
+
+# Optional but recommended
+openpyxl>=3.1.2

@@ -69,4 +69,11 @@ logs/*.log
 venv/
 ENV/
 env/
-EOF
+
+
+#tokens
+Repo_access_token.txt
+*_token
+*_token.txt
+*.token
+
