@@ -517,7 +517,7 @@ class HDF5Manager:
         }
         
         with self.open_file('r') as f:
-            hist_group = f['/data']
+            data_group = f['/data']
             
             for exchange in data_group.keys():
                 exch_group = data_group[exchange]
