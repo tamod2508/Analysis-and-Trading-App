@@ -1,18 +1,13 @@
 """
-Data Validator - EQUITY/INDEX ONLY
-Validates OHLCV data quality before storage in HDF5
-Optimized for Kite Connect API data format
-Fully integrated with config system and corporate action detection
+Validates OHLCV data quality before storage
 """
-
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass
 import logging
+import numpy as np
+import pandas as pd
 
-# Import from your config and schema modules
 from config.settings import config
 from database.schema import (
     EquityOHLCVSchema,
@@ -21,14 +16,8 @@ from database.schema import (
     HISTORICAL_DATA_START,
 )
 
-# Use config for logging setup
 logger = logging.getLogger(__name__)
 logger.setLevel(config.LOG_LEVEL)
-
-
-# ============================================================================
-# VALIDATION RESULT CLASSES
-# ============================================================================
 
 @dataclass
 class ValidationResult:
@@ -77,14 +66,9 @@ class ValidationResult:
         lines.append("=" * 70)
         return "\n".join(lines)
 
-
-# ============================================================================
-# DATA VALIDATOR CLASS
-# ============================================================================
-
 class DataValidator:
     """
-    Validates OHLCV data from Kite Connect API before HDF5 storage
+    Validates OHLCV data before storage
     
     Checks:
     - Data format and structure
@@ -98,8 +82,6 @@ class DataValidator:
     
     def __init__(self, strict_mode: bool = False):
         """
-        Initialize validator
-        
         Args:
             strict_mode: If True, warnings also fail validation
         """
