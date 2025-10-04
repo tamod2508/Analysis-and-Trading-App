@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import logging
 import numpy as np
 import pandas as pd
+import pytz
 
 from config.settings import config
 from database.schema import (
@@ -213,6 +214,8 @@ class DataValidator:
 
         except Exception as e:
             logger.error(f"Validation error: {e}")
+            import traceback
+            traceback.print_exc()  # ADD THIS LINE
             errors.append(f"Validation exception: {str(e)}")
             return ValidationResult(False, errors, warnings, anomalies, stats)
 
@@ -224,7 +227,8 @@ class DataValidator:
         """Validate DataFrame structure"""
         errors = []
 
-        required = EquityOHLCVSchema.REQUIRED_COLUMNS
+        # Required columns (timestamp is in the index, not a column)
+        required = ['open', 'high', 'low', 'close', 'volume']
         missing = [col for col in required if col not in df.columns]
 
         if missing:
@@ -349,12 +353,12 @@ class DataValidator:
         return errors, warnings
 
     def _validate_dates(
-        self,
-        df: pd.DataFrame,
-        interval: str,
-        expected_start: Optional[datetime],
-        expected_end: Optional[datetime],
-    ) -> Tuple[List[str], List[str], Dict]:
+    self,
+    df: pd.DataFrame,
+    interval: str,
+    expected_start: Optional[datetime],
+    expected_end: Optional[datetime],
+) -> Tuple[List[str], List[str], Dict]:
         """Validate date range and continuity"""
         errors = []
         warnings = []
@@ -371,16 +375,36 @@ class DataValidator:
         if not df.index.is_monotonic_increasing:
             errors.append("Timestamps are not in ascending order")
 
-        # Check expected vs actual dates
+        # Check expected vs actual dates with proper timezone handling
         if expected_start:
-            if actual_start > expected_start:
+            # Convert both to pandas Timestamps for comparison
+            expected_ts = pd.Timestamp(expected_start)
+            actual_ts = pd.Timestamp(actual_start)
+            
+            # If one has timezone and other doesn't, normalize to UTC
+            if expected_ts.tz is None and actual_ts.tz is not None:
+                expected_ts = expected_ts.tz_localize('UTC')
+            elif expected_ts.tz is not None and actual_ts.tz is None:
+                actual_ts = actual_ts.tz_localize('UTC')
+            
+            # Now compare
+            if actual_ts > expected_ts:
                 warnings.append(
                     f"Data starts later than expected: "
                     f"{actual_start} vs {expected_start}"
                 )
 
         if expected_end:
-            if actual_end < expected_end:
+            expected_ts = pd.Timestamp(expected_end)
+            actual_ts = pd.Timestamp(actual_end)
+            
+            # Normalize timezones if needed
+            if expected_ts.tz is None and actual_ts.tz is not None:
+                expected_ts = expected_ts.tz_localize('UTC')
+            elif expected_ts.tz is not None and actual_ts.tz is None:
+                actual_ts = actual_ts.tz_localize('UTC')
+            
+            if actual_ts < expected_ts:
                 warnings.append(
                     f"Data ends earlier than expected: "
                     f"{actual_end} vs {expected_end}"
@@ -392,10 +416,9 @@ class DataValidator:
         stats.update(gap_stats)
 
         return errors, warnings, stats
-
     def _check_date_gaps(
-        self, df: pd.DataFrame, interval: str
-    ) -> Tuple[List[str], Dict]:
+    self, df: pd.DataFrame, interval: str
+) -> Tuple[List[str], Dict]:
         """Check for gaps in date sequence"""
         warnings = []
         stats = {}
@@ -414,8 +437,12 @@ class DataValidator:
             # For other intervals, skip gap detection
             return warnings, stats
 
-        # Check gaps
-        time_diff = df.index.to_series().diff()
+        # Check gaps - convert to timezone-naive for comparison
+        index_for_diff = df.index
+        if index_for_diff.tz is not None:
+            index_for_diff = index_for_diff.tz_localize(None)
+        
+        time_diff = index_for_diff.to_series().diff()
         large_gaps = time_diff > tolerance
 
         gap_count = large_gaps.sum()
@@ -575,11 +602,11 @@ class DataValidator:
         return errors
 
     def _check_data_availability(
-        self,
-        df: pd.DataFrame,
-        exchange: str,
-        interval: str,
-    ) -> List[str]:
+    self,
+    df: pd.DataFrame,
+    exchange: str,
+    interval: str,
+) -> List[str]:
         """Check if data is within expected availability window"""
         warnings = []
 
@@ -589,8 +616,9 @@ class DataValidator:
         if interval != 'day':  # Intraday data
             key = f"{exchange}_intraday"
             if key in HISTORICAL_DATA_START:
-                expected_start = pd.to_datetime(HISTORICAL_DATA_START[key])
-
+                expected_start = HISTORICAL_DATA_START[key]
+                
+                # Both are now timezone-aware, compare directly
                 if actual_start < expected_start:
                     warnings.append(
                         f"Data starts before expected availability: "
@@ -599,38 +627,33 @@ class DataValidator:
 
         return warnings
 
-
     def _to_dataframe(
-        self, data: Union[List[Dict], np.ndarray, pd.DataFrame]
-    ) -> Optional[pd.DataFrame]:
-        """Convert input data to DataFrame with DatetimeIndex"""
+    self, data: Union[List[Dict], np.ndarray, pd.DataFrame]
+) -> Optional[pd.DataFrame]:
+        """Convert input data to DataFrame with DatetimeIndex (preserves timezone)"""
         try:
             if isinstance(data, pd.DataFrame):
                 df = data.copy()
                 
-                # ADD 'timestamp' column if missing but index is datetime
-                if isinstance(df.index, pd.DatetimeIndex) and 'timestamp' not in df.columns:
-                    df.insert(0, 'timestamp', df.index)
-                
                 # Ensure datetime index
                 if not isinstance(df.index, pd.DatetimeIndex):
                     if 'timestamp' in df.columns:
+                        df['timestamp'] = pd.to_datetime(df['timestamp'])
                         df = df.set_index('timestamp')
                     elif 'date' in df.columns:
                         df['date'] = pd.to_datetime(df['date'])
                         df = df.set_index('date')
                 
+                # Keep timezone as-is
                 return df
 
             elif isinstance(data, np.ndarray):
-                # Structured array from schema
                 df = pd.DataFrame(data)
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
                 df = df.set_index('timestamp')
                 return df
 
             elif isinstance(data, list):
-                # List of dicts from Kite API
                 df = pd.DataFrame(data)
 
                 if 'date' in df.columns:

@@ -1,7 +1,5 @@
 """
-HDF5 Database Schema Definition - EQUITY/INDEX ONLY
-Optimized for multi-timeframe equity and index data storage
-(Options schemas in separate module: database/options_schema.py)
+HDF5 Database Schema Definition 
 """
 
 import numpy as np
@@ -10,11 +8,7 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 import pandas as pd
-
-# ============================================================================
-# INTERVALS ENUM (matches Kite Connect API)
-# ============================================================================
-
+import pytz
 class Interval(str, Enum):
     """Candlestick intervals"""
     MINUTE = "minute"
@@ -26,57 +20,48 @@ class Interval(str, Enum):
     MINUTE_60 = "60minute"
     DAY = "day"
 
-
-# ============================================================================
-# PRIMARY INTERVALS CONFIGURATION
-# ============================================================================
-
-# Intervals to fetch by default for equity/index
 PRIMARY_INTERVALS = [
-    Interval.DAY,           # Long-term analysis
-    Interval.MINUTE_60,     # Hourly - swing trading
-    Interval.MINUTE_15,     # 15-min - intraday analysis
+    Interval.DAY,         
+    Interval.MINUTE_60,   
+    Interval.MINUTE_15,     
 ]
 
 # Per-request limits for each interval (from Kite API)
 INTERVAL_FETCH_LIMITS = {
-    Interval.MINUTE: 60,        # 60 days per request
-    Interval.MINUTE_3: 100,     # 100 days per request
-    Interval.MINUTE_5: 100,     # 100 days per request
-    Interval.MINUTE_10: 100,    # 100 days per request
-    Interval.MINUTE_15: 200,    # 200 days per request
-    Interval.MINUTE_30: 200,    # 200 days per request
-    Interval.MINUTE_60: 400,    # 400 days per request
-    Interval.DAY: 2000,         # 2000 days per request
+    Interval.MINUTE: 60,       
+    Interval.MINUTE_3: 100,     
+    Interval.MINUTE_5: 100,     
+    Interval.MINUTE_10: 100,   
+    Interval.MINUTE_15: 200,    
+    Interval.MINUTE_30: 200,    
+    Interval.MINUTE_60: 400,   
+    Interval.DAY: 2000,        
 }
 
 # Historical data availability dates
+IST = pytz.timezone('Asia/Kolkata')
+
 HISTORICAL_DATA_START = {
-    'NSE_intraday': '2015-02-02',   # NSE intraday data starts here
-    'BSE_intraday': '2016-03-18',   # BSE intraday data starts here
-    'daily': '2005-01-01',          # Daily data goes back much further
+    'NSE_intraday': pd.Timestamp('2015-02-02', tz=IST),
+    'BSE_intraday': pd.Timestamp('2016-03-18', tz=IST),
+    'daily': pd.Timestamp('2005-01-01', tz=IST),
 }
 
-
-# ============================================================================
-# EQUITY OHLCV SCHEMA (Clean - no options fields)
-# ============================================================================
 
 @dataclass
 class EquityOHLCVSchema:
     """
-    Schema for equity/index OHLCV (candlestick) data
-    Pure equity schema - NO options-specific fields
+    Schema for OHLCV (candlestick) data
     """
     
     # Column definitions with NumPy dtypes
     DTYPE = np.dtype([
         ('timestamp', 'int64'),  # Unix timestamp
-        ('open', 'float32'),              # Opening price
-        ('high', 'float32'),              # High price
-        ('low', 'float32'),               # Low price
-        ('close', 'float32'),             # Closing price
-        ('volume', 'int64'),              # Trading volume
+        ('open', 'float32'),          
+        ('high', 'float32'),              
+        ('low', 'float32'),             
+        ('close', 'float32'),             
+        ('volume', 'int64'),          
     ])
     
     REQUIRED_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
@@ -98,26 +83,19 @@ class EquityOHLCVSchema:
 class InstrumentSchema:
     """
     Schema for equity/index instrument metadata
-    Clean separation - futures/options metadata in options_schema.py
     """
     
     DTYPE = np.dtype([
         ('instrument_token', 'int64'),
         ('exchange_token', 'int64'),
-        ('tradingsymbol', 'U50'),      # Trading symbol
-        ('name', 'U100'),               # Company/Index name
-        ('last_price', 'float32'),      # Last traded price
-        ('tick_size', 'float32'),       # Minimum price movement
-        ('lot_size', 'int32'),          # Lot size
-        ('instrument_type', 'U10'),     # EQ (Equity only for this schema)
-        ('segment', 'U10'),             # NSE, BSE
-        ('exchange', 'U10'),            # Exchange code
+        ('tradingsymbol', 'U50'),      
+        ('name', 'U100'),               
+        ('last_price', 'float32'),      
+        ('tick_size', 'float32'),          
+        ('instrument_type', 'U10'),     
+        ('segment', 'U10'),            
+        ('exchange', 'U10'),            
     ])
-
-
-# ============================================================================
-# HDF5 HIERARCHICAL STRUCTURE (Equity/Index)
-# ============================================================================
 
 class HDF5Structure:
     """
@@ -148,7 +126,6 @@ class HDF5Structure:
         '/data',
     ]
     
-    # Exchange groups (equity only)
     EXCHANGES = ['NSE', 'BSE']
     
     @staticmethod
@@ -167,7 +144,7 @@ class HDF5Structure:
             interval: 15minute, 60minute, day
         
         Returns:
-            Path like: /historical/NSE/RELIANCE/15minute
+            Path like: /data/NSE/RELIANCE/15minute
         """
         exchange = exchange.upper()
         # Clean symbol name
@@ -241,17 +218,13 @@ class DatasetAttributes:
             'schema_version': '1.0',
         }
 
-# ============================================================================
-# COMPRESSION SETTINGS (M1 Optimized)
-# ============================================================================
-
 @dataclass
 class CompressionSettings:
     """HDF5 compression configuration optimized for M1"""
     
     # Compression algorithm
     ALGORITHM: str = 'gzip'
-    LEVEL: int = 4  # Sweet spot for M1 (balance speed/compression)
+    LEVEL: int = 7 
     SHUFFLE: bool = True  # Improves compression ratio
     
     # Chunk sizes optimized by interval
@@ -286,7 +259,6 @@ class CompressionSettings:
         # Get chunk size for this interval
         default_chunks = cls.CHUNK_SIZES.get(interval_enum, (1000,))
         
-        # ADD THESE LINES:
         if data_size is not None:
             chunk_size = min(default_chunks[0], max(10, data_size))
             chunks = (chunk_size,)
@@ -297,13 +269,9 @@ class CompressionSettings:
             'compression': cls.ALGORITHM,
             'compression_opts': cls.LEVEL,
             'shuffle': cls.SHUFFLE,
-            'chunks': chunks,  # was: default_chunks
+            'chunks': chunks
         }
 
-
-# ============================================================================
-# VALIDATION RULES
-# ============================================================================
 
 class ValidationRules:
     """Data validation rules for equity OHLCV data"""
@@ -381,10 +349,6 @@ class ValidationRules:
         return len(invalid_rows) == 0, stats
 
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
 def create_empty_ohlcv_array(size: int = 0) -> np.ndarray:
     """Create an empty equity OHLCV array with correct dtype"""
     return np.zeros(size, dtype=EquityOHLCVSchema.DTYPE)
@@ -413,7 +377,21 @@ def dict_to_ohlcv_array(data: List[Dict]) -> np.ndarray:
     arr = create_empty_ohlcv_array(size)
     
     for i, row in enumerate(data):
-        arr[i]['timestamp'] = np.datetime64(row['date'])
+        # Handle timezone-aware datetime
+        date_val = row['date']
+        if isinstance(date_val, pd.Timestamp):
+            # Convert to UTC then to Unix timestamp
+            if date_val.tz is not None:
+                date_val = date_val.tz_convert('UTC')
+            timestamp = int(date_val.timestamp())
+        elif hasattr(date_val, 'timestamp'):
+            # Python datetime object
+            timestamp = int(date_val.timestamp())
+        else:
+            # Already a timestamp or string
+            timestamp = int(pd.Timestamp(date_val).timestamp())
+        
+        arr[i]['timestamp'] = timestamp
         arr[i]['open'] = row['open']
         arr[i]['high'] = row['high']
         arr[i]['low'] = row['low']

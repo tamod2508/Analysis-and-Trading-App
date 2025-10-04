@@ -329,11 +329,13 @@ class HDF5Manager:
                     mask = np.ones(len(data), dtype=bool)
                     
                     if start_date:
-                        start_ts = np.datetime64(start_date)
+                        # Convert datetime to Unix timestamp for comparison
+                        start_ts = int(pd.Timestamp(start_date).timestamp())
                         mask &= (data['timestamp'] >= start_ts)
                     
                     if end_date:
-                        end_ts = np.datetime64(end_date)
+                        # Convert datetime to Unix timestamp for comparison
+                        end_ts = int(pd.Timestamp(end_date).timestamp())
                         mask &= (data['timestamp'] <= end_ts)
                     
                     data = data[mask]
@@ -343,14 +345,25 @@ class HDF5Manager:
                     data = data[columns]
                 
                 # Convert to DataFrame if requested
+                # Convert to DataFrame if requested
                 if as_dataframe:
                     df = pd.DataFrame(data)
                     if 'timestamp' in df.columns:
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit ='s')
+                        # Convert Unix timestamp to datetime (UTC)
+                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
+                        
+                        # For intraday data, convert to Indian timezone
+                        # For daily data, remove timezone (just dates matter)
+                        interval_str = interval.value if isinstance(interval, Interval) else interval
+                        if interval_str != 'day':
+                            # Intraday: keep timezone-aware in IST
+                            df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
+                        else:
+                            # Daily: remove timezone
+                            df['timestamp'] = df['timestamp'].dt.tz_localize(None)
+                        
                         df = df.set_index('timestamp')
                     return df
-                
-                return data
                 
         except Exception as e:
             logger.error(f"❌ Error retrieving OHLCV data for {symbol} {interval}: {e}")
@@ -649,17 +662,30 @@ class HDF5Manager:
                 f.create_group(current)
     
     def _dataframe_to_array(self, df: pd.DataFrame) -> np.ndarray:
-        """Convert pandas DataFrame to structured numpy array"""
+        """Convert pandas DataFrame to structured numpy array (converts to UTC Unix timestamps)"""
         size = len(df)
         arr = create_empty_ohlcv_array(size)
         
         # Map DataFrame columns to array fields
         if 'date' in df.columns:
-            arr['timestamp'] = pd.to_datetime(df['date']).astype('int64') // 10**9
+            # Convert to UTC Unix timestamp (int64)
+            dates = pd.to_datetime(df['date'])
+            if dates.dt.tz is not None:
+                # Convert to UTC first, then to Unix timestamp
+                dates = dates.dt.tz_convert('UTC')
+            arr['timestamp'] = dates.astype('int64') // 10**9
         elif 'timestamp' in df.columns:
-            arr['timestamp'] = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
+            dates = pd.to_datetime(df['timestamp'])
+            if dates.dt.tz is not None:
+                dates = dates.dt.tz_convert('UTC')
+            arr['timestamp'] = dates.astype('int64') // 10**9
         elif isinstance(df.index, pd.DatetimeIndex):
-            arr['timestamp'] = df.index.astype('int64') // 10**9
+            # Use index as timestamp
+            dates = df.index
+            if dates.tz is not None:
+                # Convert timezone-aware index to UTC
+                dates = dates.tz_convert('UTC')
+            arr['timestamp'] = dates.astype('int64') // 10**9
         
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
