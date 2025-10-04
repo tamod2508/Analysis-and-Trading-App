@@ -1,6 +1,5 @@
 """
-Data Adjuster - Handle corporate action adjustments for incremental updates
-Critical for maintaining data consistency when doing incremental fetches
+Data Adjuster - Handle corporate action adjustments for hidtorical data
 """
 
 import pandas as pd
@@ -19,9 +18,6 @@ logger = logging.getLogger(__name__)
 class DataAdjuster:
     """
     Adjust historical data for corporate actions
-    
-    Use Case: When doing incremental updates, old data in database may not
-    be adjusted for new corporate actions that occurred after initial fetch.
     """
     
     def __init__(self):
@@ -228,8 +224,8 @@ class DataAdjuster:
                 action_close = data.loc[action_date]['close']
                 pct_change = abs((action_close - prev_close) / prev_close)
                 
-                # If change is large (>15%), data is NOT adjusted yet
-                if pct_change > 0.15:
+                # If change is large (>20%), data is NOT adjusted yet
+                if pct_change > 0.20:
                     actions_to_apply.append({
                         'action': action,
                         'reason': f'Large price discontinuity ({pct_change*100:.1f}%) at action date',
@@ -331,9 +327,6 @@ class DataAdjuster:
     ) -> Dict:
         """
         Complete workflow for incremental data updates with corporate action handling
-        
-        This is the method you should use for incremental updates!
-        
         Args:
             exchange: NSE, BSE
             symbol: Trading symbol
@@ -404,14 +397,9 @@ class DataAdjuster:
             'message': 'Incremental update completed successfully'
         }
 
-
-# ========================================================================
-# CONVENIENCE FUNCTIONS
-# ========================================================================
-
 def adjust_symbol(symbol: str, exchange: str = 'NSE', interval: str = 'day', dry_run: bool = False):
     """
-    Quick function to adjust a symbol's data
+    Adjust a symbol's data
     
     Usage:
         adjust_symbol('RELIANCE', dry_run=True)  # Preview
@@ -423,7 +411,7 @@ def adjust_symbol(symbol: str, exchange: str = 'NSE', interval: str = 'day', dry
 
 def check_symbol_consistency(symbol: str, exchange: str = 'NSE', interval: str = 'day'):
     """
-    Quick function to check if a symbol needs adjustment
+    Check if a symbol needs adjustment
     
     Usage:
         result = check_symbol_consistency('RELIANCE')

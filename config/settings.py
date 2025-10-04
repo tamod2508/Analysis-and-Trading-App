@@ -5,7 +5,7 @@ Application configuration settings
 import os
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from dotenv import load_dotenv
 import psutil
 
