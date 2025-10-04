@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
+import pandas as pd
 
 # ============================================================================
 # INTERVALS ENUM (matches Kite Connect API)
@@ -70,7 +71,7 @@ class EquityOHLCVSchema:
     
     # Column definitions with NumPy dtypes
     DTYPE = np.dtype([
-        ('timestamp', 'datetime64[s]'),  # Unix timestamp
+        ('timestamp', 'int64'),  # Unix timestamp
         ('open', 'float32'),              # Opening price
         ('high', 'float32'),              # High price
         ('low', 'float32'),               # Low price
@@ -263,7 +264,7 @@ class CompressionSettings:
     }
     
     @classmethod
-    def get_settings(cls, interval: str) -> Dict:
+    def get_settings(cls, interval: str, data_size: int = None) -> Dict:
         """
         Get optimal compression settings for interval
         
@@ -283,13 +284,20 @@ class CompressionSettings:
             interval_enum = interval
         
         # Get chunk size for this interval
-        chunks = cls.CHUNK_SIZES.get(interval_enum, (1000,))
+        default_chunks = cls.CHUNK_SIZES.get(interval_enum, (1000,))
         
+        # ADD THESE LINES:
+        if data_size is not None:
+            chunk_size = min(default_chunks[0], max(10, data_size))
+            chunks = (chunk_size,)
+        else:
+            chunks = default_chunks
+
         return {
             'compression': cls.ALGORITHM,
             'compression_opts': cls.LEVEL,
             'shuffle': cls.SHUFFLE,
-            'chunks': chunks,
+            'chunks': chunks,  # was: default_chunks
         }
 
 
@@ -309,8 +317,8 @@ class ValidationRules:
     MAX_VOLUME = 10_000_000_000
     
     # Date validation
-    MIN_DATE = np.datetime64('2000-01-01')
-    MAX_DATE = np.datetime64('2099-12-31')
+    MIN_DATE = int(pd.Timestamp('2000-01-01').timestamp())
+    MAX_DATE = int(pd.Timestamp('2099-12-31').timestamp())
     
     @classmethod
     def validate_ohlcv_row(cls, row: np.ndarray) -> Tuple[bool, List[str]]:

@@ -126,6 +126,12 @@ class DataValidator:
         try:
             # Convert to DataFrame for easier validation
             df = self._to_dataframe(data)
+            if 'date' in df.columns and 'timestamp' not in df.columns:
+                df['timestamp'] = pd.to_datetime(df['date'])
+                df = df.set_index('timestamp')
+            elif 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.set_index('date')
 
             if df is None or len(df) == 0:
                 errors.append("Empty dataset")
@@ -601,7 +607,11 @@ class DataValidator:
         try:
             if isinstance(data, pd.DataFrame):
                 df = data.copy()
-
+                
+                # ADD 'timestamp' column if missing but index is datetime
+                if isinstance(df.index, pd.DatetimeIndex) and 'timestamp' not in df.columns:
+                    df.insert(0, 'timestamp', df.index)
+                
                 # Ensure datetime index
                 if not isinstance(df.index, pd.DatetimeIndex):
                     if 'timestamp' in df.columns:
@@ -609,7 +619,7 @@ class DataValidator:
                     elif 'date' in df.columns:
                         df['date'] = pd.to_datetime(df['date'])
                         df = df.set_index('date')
-
+                
                 return df
 
             elif isinstance(data, np.ndarray):

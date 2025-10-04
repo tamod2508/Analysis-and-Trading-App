@@ -87,8 +87,8 @@ class CorporateActionDetector:
                 action = {
                     'symbol': symbol,
                     'exchange': exchange,
-                    'date': idx.strftime('%Y-%m-%d'),
-                    'timestamp': idx.isoformat(),
+                    'date': idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx),
+                    'timestamp': idx.isoformat() if hasattr(idx, 'isoformat') else str(idx),
                     'price_change_pct': round(change * 100, 2),
                     'prev_close': round(prev_close, 2),
                     'curr_close': round(curr_close, 2),

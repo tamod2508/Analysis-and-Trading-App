@@ -1,7 +1,5 @@
 """
 HDF5 Database Manager - EQUITY/INDEX ONLY
-Optimized for multi-timeframe equity data on Apple M1 with 8GB RAM
-Clean separation: Options functionality in separate module
 """
 
 import h5py
@@ -192,7 +190,7 @@ class HDF5Manager:
             path = self.structure.get_data_path(exchange, symbol, interval)
             
             # Get compression settings for this interval
-            comp_settings = self.compression.get_settings(interval)
+            comp_settings = self.compression.get_settings(interval, data_size=len(arr))
             
             # Save to database
             with self.open_file('a') as f:
@@ -348,7 +346,7 @@ class HDF5Manager:
                 if as_dataframe:
                     df = pd.DataFrame(data)
                     if 'timestamp' in df.columns:
-                        df['timestamp'] = pd.to_datetime(df['timestamp'])
+                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit ='s')
                         df = df.set_index('timestamp')
                     return df
                 
@@ -657,11 +655,11 @@ class HDF5Manager:
         
         # Map DataFrame columns to array fields
         if 'date' in df.columns:
-            arr['timestamp'] = pd.to_datetime(df['date']).values
+            arr['timestamp'] = pd.to_datetime(df['date']).astype('int64') // 10**9
         elif 'timestamp' in df.columns:
-            arr['timestamp'] = pd.to_datetime(df['timestamp']).values
+            arr['timestamp'] = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
         elif isinstance(df.index, pd.DatetimeIndex):
-            arr['timestamp'] = df.index.values
+            arr['timestamp'] = df.index.astype('int64') // 10**9
         
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
