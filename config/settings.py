@@ -46,6 +46,7 @@ class AppConfig:
 
     # Rate limiting
     API_RATE_LIMIT: int = 3  # Kite API hard limit
+    API_RATE_SAFETY_MARGIN: float = 0.05  # Extra safety buffer (50ms) to avoid rate limit errors
     API_TIMEOUT: int = 60  # Generous timeout
     MAX_RETRIES: int = 7  # Aggressive retry strategy
     RETRY_DELAY: int = 2  # Quick retry

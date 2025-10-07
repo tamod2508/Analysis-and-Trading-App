@@ -45,14 +45,15 @@ class KiteClient:
             self.kite.set_access_token(self.access_token)
         
         # Rate limiting
-        self.last_request_time = 0
-        self.min_request_interval = 1.0 / config.API_RATE_LIMIT  # ~0.33 seconds
-        
+        self.last_request_time = time.time()  # Initialize to current time
+        self.min_request_interval = (1.0 / config.API_RATE_LIMIT) + config.API_RATE_SAFETY_MARGIN
+
         # Validator and database
         self.validator = DataValidator(strict_mode=False)
         self.db = HDF5Manager()
-        
-        logger.info(f"KiteClient initialized (rate limit: {config.API_RATE_LIMIT} req/sec)")
+
+        actual_rate = 1.0 / self.min_request_interval
+        logger.info(f"KiteClient initialized (rate limit: {config.API_RATE_LIMIT} req/sec with {config.API_RATE_SAFETY_MARGIN*1000:.0f}ms safety margin, actual: {actual_rate:.2f} req/sec, interval: {self.min_request_interval:.3f}s)")
     
     def _rate_limit_wait(self):
         """Enforce rate limiting between API calls"""

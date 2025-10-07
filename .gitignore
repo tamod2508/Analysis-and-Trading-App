@@ -80,7 +80,6 @@ Repo_access_token.txt
 
 todo.md
 
-.pylint.d/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
