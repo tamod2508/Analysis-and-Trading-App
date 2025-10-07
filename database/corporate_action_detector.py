@@ -10,7 +10,15 @@ import logging
 import pandas as pd
 
 
-from config.settings import config
+from config import (
+    config,
+    CIRCUIT_LIMIT_PERCENT,
+    CORPORATE_ACTION_RATIOS,
+    CORPORATE_ACTIONS_FILENAME,
+    CA_DETECTION_THRESHOLD,
+    CA_HIGH_CONFIDENCE_THRESHOLD,
+    CA_MEDIUM_CONFIDENCE_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,23 +26,11 @@ logger = logging.getLogger(__name__)
 class CorporateActionDetector:
     """
     Detects corporate actions by analyzing price movements
-    Uses 20% circuit breaker rule
+    Uses 20% circuit breaker rule (NSE/BSE standard)
     """
 
-    #Circuit limits
-    CIRCUIT_LIMIT_PERCENT = 20.0  # NSE/BSE daily limit
-
-    # Common split/bonus ratios and their expected price changes
-    KNOWN_RATIOS = {
-        0.50: {'ratio': '1:1', 'type': 'bonus', 'description': '1:1 Bonus (50% drop)'},
-        0.67: {'ratio': '1:2', 'type': 'bonus', 'description': '1:2 Bonus (33% drop)'},
-        0.75: {'ratio': '1:3', 'type': 'bonus', 'description': '1:3 Bonus (25% drop)'},
-        0.80: {'ratio': '1:5', 'type': 'split', 'description': '1:5 Split (80% drop)'},
-        0.90: {'ratio': '1:10', 'type': 'split', 'description': '1:10 Split (90% drop)'},
-    }
-
     def __init__(self):
-        self.actions_file = config.DATA_DIR / 'corporate_actions.json'
+        self.actions_file = config.DATA_DIR / CORPORATE_ACTIONS_FILENAME
         self._ensure_file_exists()
 
     def _ensure_file_exists(self):
@@ -62,7 +58,7 @@ class CorporateActionDetector:
             List of detected corporate action events
         """
         if threshold is None:
-            threshold = self.CIRCUIT_LIMIT_PERCENT / 100.0
+            threshold = CA_DETECTION_THRESHOLD
 
         detected_actions = []
 
@@ -123,16 +119,16 @@ class CorporateActionDetector:
         closest_ratio = None
         min_diff = float('inf')
 
-        for known_change, info in self.KNOWN_RATIOS.items():
+        for known_change, info in CORPORATE_ACTION_RATIOS.items():
             diff = abs(change - known_change)
             if diff < min_diff:
                 min_diff = diff
                 closest_ratio = info.copy()
 
         # Calculate confidence based on how close to known ratio
-        if min_diff < 0.05:  # Within 5%
+        if min_diff < CA_HIGH_CONFIDENCE_THRESHOLD:
             confidence = 'high'
-        elif min_diff < 0.10:  # Within 10%
+        elif min_diff < CA_MEDIUM_CONFIDENCE_THRESHOLD:
             confidence = 'medium'
         else:
             confidence = 'low'

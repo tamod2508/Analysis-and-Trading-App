@@ -52,7 +52,7 @@ class ConfigOptimizer:
             return 'Unknown'
 
     def _is_m1(self) -> bool:
-        return self.chip == 'M1' and self.ram_gb <= 9
+        return self.chip == 'M1' and self.ram_gb <= 10
 
     def _apply_m1_settings(self):
         

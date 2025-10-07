@@ -98,8 +98,6 @@ class HDF5Structure:
         ]
 
 
-    EXCHANGES = ['NSE', 'BSE', "NFO"]
-
     @staticmethod
     def get_instrument_path(exchange: str) -> str:
         """Get path for instrument metadata"""

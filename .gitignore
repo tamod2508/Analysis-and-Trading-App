@@ -51,6 +51,7 @@ logs/*.log
 *.swo
 *~
 .DS_Store
+.claude
 
 # macOS
 .DS_Store

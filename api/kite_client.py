@@ -10,7 +10,7 @@ from typing import List, Dict, Optional, Tuple
 from kiteconnect import KiteConnect
 import pandas as pd
 
-from config.settings import config
+from config import config
 from config.constants import Exchange, Interval, API_LIMITS
 from database.data_validator import DataValidator
 from database.hdf5_manager import HDF5Manager

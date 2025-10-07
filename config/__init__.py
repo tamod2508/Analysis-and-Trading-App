@@ -45,6 +45,14 @@ from .constants import (
     ERROR_MESSAGES,
     SUCCESS_MESSAGES,
 
+    # Corporate Actions
+    CIRCUIT_LIMIT_PERCENT,
+    CORPORATE_ACTION_RATIOS,
+    CORPORATE_ACTIONS_FILENAME,
+    CA_DETECTION_THRESHOLD,
+    CA_HIGH_CONFIDENCE_THRESHOLD,
+    CA_MEDIUM_CONFIDENCE_THRESHOLD,
+
     CHUNK_SIZES
 )
 from .optimizer import optimizer, get_system_info, get_detailed_system_info
@@ -97,6 +105,14 @@ __all__ = [
     # Messages
     'ERROR_MESSAGES',
     'SUCCESS_MESSAGES',
+
+    # Corporate Actions
+    'CIRCUIT_LIMIT_PERCENT',
+    'CORPORATE_ACTION_RATIOS',
+    'CORPORATE_ACTIONS_FILENAME',
+    'CA_DETECTION_THRESHOLD',
+    'CA_HIGH_CONFIDENCE_THRESHOLD',
+    'CA_MEDIUM_CONFIDENCE_THRESHOLD',
 
     'CHUNK_SIZES'
 ]

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from kiteconnect import KiteConnect
 
-from config.settings import config
+from config import config
 
 logger = logging.getLogger(__name__)
 

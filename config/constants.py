@@ -119,7 +119,7 @@ TIME_RANGES = {
     "1 Year": 365,
     "2 Years": 730,
     "5 Years": 1825,
-    "10 years": 3650,
+    "10 Years": 3650,
     "All Time": None,
 }
 
@@ -168,3 +168,23 @@ API_LIMITS = {
     'RATE_LIMIT_PER_SECOND': 3,
     'MAX_HISTORICAL_DAYS': 365 * 2,  # 2 years typically
 }
+
+# Corporate Action Constants
+CIRCUIT_LIMIT_PERCENT = 20.0  # NSE/BSE daily circuit breaker limit
+
+# Common split/bonus ratios and their expected price changes
+CORPORATE_ACTION_RATIOS = {
+    0.50: {'ratio': '1:1', 'type': 'bonus', 'description': '1:1 Bonus (50% drop)'},
+    0.67: {'ratio': '1:2', 'type': 'bonus', 'description': '1:2 Bonus (33% drop)'},
+    0.75: {'ratio': '1:3', 'type': 'bonus', 'description': '1:3 Bonus (25% drop)'},
+    0.80: {'ratio': '1:5', 'type': 'split', 'description': '1:5 Split (80% drop)'},
+    0.90: {'ratio': '1:10', 'type': 'split', 'description': '1:10 Split (90% drop)'},
+}
+
+# Corporate action file settings
+CORPORATE_ACTIONS_FILENAME = 'corporate_actions.json'
+
+# Corporate action detection thresholds
+CA_DETECTION_THRESHOLD = CIRCUIT_LIMIT_PERCENT / 100.0  # 0.20 (20%)
+CA_HIGH_CONFIDENCE_THRESHOLD = 0.05  # Within 5% of known ratio
+CA_MEDIUM_CONFIDENCE_THRESHOLD = 0.10  # Within 10% of known ratio

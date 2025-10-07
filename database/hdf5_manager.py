@@ -1,8 +1,9 @@
 """
-HDF5 Database Manager - EQUITY/INDEX ONLY
+HDF5 Database Manager
 """
 
 import h5py
+import hdf5plugin
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -13,15 +14,25 @@ import shutil
 import gc
 import logging
 
-from config.settings import config
-from database.schema import (
+from config import (
+    config,
     Interval,
-    PRIMARY_INTERVALS,
+    Segment,
+    Exchange,
+    CHUNK_SIZES,
+    MIN_PRICE,
+    MAX_PRICE,
+    MIN_VOLUME,
+    MAX_VOLUME,
+    MIN_DATE,
+    MAX_DATE,
+    IST,
+)
+from database.schema import (
     EquityOHLCVSchema,
     InstrumentSchema,
     HDF5Structure,
     DatasetAttributes,
-    CompressionSettings,
     ValidationRules,
     create_empty_ohlcv_array,
     dict_to_ohlcv_array,
@@ -33,35 +44,34 @@ logger = logging.getLogger(__name__)
 
 class HDF5Manager:
     """
-    HDF5 Database Manager for multi-timeframe equity/index data
-    Thread-safe, memory-efficient operations optimized for M1
+    HDF5 Database Manager 
     """
     
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, segment: str = 'EQUITY'):
         """
-        Initialize HDF5 Manager
+        Initialize HDF5 Manager for a specific segment
         
         Args:
-            db_path: Path to HDF5 file (default: from config)
+            segment: Market segment (EQUITY, DERIVATIVES, COMMODITY, CURRENCY)
         """
-        self.db_path = Path(db_path) if db_path else config.HDF5_FILE
+        self.segment = segment.upper()
+        self.db_path = config.get_hdf5_path(self.segment)
         self.structure = HDF5Structure()
-        self.compression = CompressionSettings()
         
-        # Ensure database exists
+        # Ensure HDF5 directory exists
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize database if needed
         if not self.db_path.exists():
             self._initialize_database()
         
-        logger.info(f"HDF5Manager initialized: {self.db_path}")
-    
-    # ========================================================================
-    # CONTEXT MANAGERS
-    # ========================================================================
+        logger.info(f"HDF5Manager initialized: {self.db_path} (Segment: {self.segment})")
+        logger.info(f"Compression: {config.HDF5_COMPRESSION} (level {config.HDF5_COMPRESSION_LEVEL})")
     
     @contextmanager
     def open_file(self, mode: str = 'r'):
         """
-        Context manager for safe file operations
+        Context manager for safe file operations with optimized settings
         
         Args:
             mode: 'r' (read), 'r+' (read/write), 'a' (append)
@@ -72,27 +82,51 @@ class HDF5Manager:
         """
         f = None
         try:
+            # Get optimized HDF5 options from config
+            hdf5_opts = config.get_hdf5_options()
+            
             f = h5py.File(
                 self.db_path,
                 mode,
-                rdcc_nbytes=config.HDF5_RDCC_NBYTES,
-                rdcc_nslots=config.HDF5_RDCC_NSLOTS,
-                rdcc_w0=config.HDF5_RDCC_W0,
+                **hdf5_opts,
             )
             yield f
+            
         except Exception as e:
-            logger.error(f"HDF5 file operation error: {e}")
+            logger.error(f"HDF5 file operation error [{self.segment}]: {e}")
             raise
+            
         finally:
             if f is not None:
                 f.close()
+                
+                # Periodic garbage collection for memory efficiency
+                if mode in ['a', 'r+'] and config.ENABLE_AGGRESSIVE_GC:
+                    gc.collect()
     
-    # ========================================================================
-    # DATABASE INITIALIZATION
-    # ========================================================================
+    def _get_compression_settings(self, interval: Union[str, Interval], data_size: int = None) -> Dict:
+        """
+        Get compression settings from config
+        
+        Returns:
+            Dict with hdf5plugin.Blosc filter and chunks ready for create_dataset()
+        """
+        settings = config.get_hdf5_creation_settings(interval, data_size)
+        
+        # Create blosc filter directly
+        blosc_filter = hdf5plugin.Blosc(
+            cname='lz4',
+            clevel=config.HDF5_COMPRESSION_LEVEL,
+            shuffle=hdf5plugin.Blosc.SHUFFLE,
+        )
+        
+        return {
+            **blosc_filter,
+            'chunks': settings['chunks']
+        }
     
     def _initialize_database(self):
-        """Create new HDF5 database with structure"""
+        """Create new HDF5 database with proper structure"""
         logger.info(f"Creating new database: {self.db_path}")
         
         with self.open_file('w') as f:
@@ -100,25 +134,36 @@ class HDF5Manager:
             for group_path in self.structure.ROOT_GROUPS:
                 f.create_group(group_path)
             
-            # Create exchange groups
-            for exchange in self.structure.EXCHANGES:
+            # Create exchange groups (segment-specific)
+            exchanges = self._get_segment_exchanges()
+            for exchange in exchanges:
                 f.create_group(f'/instruments/{exchange}')
                 f.create_group(f'/data/{exchange}')
             
             # Set database metadata
             f.attrs['db_version'] = '1.0'
+            f.attrs['segment'] = self.segment
             f.attrs['created_at'] = datetime.now().isoformat()
             f.attrs['last_updated'] = datetime.now().isoformat()
-            f.attrs['format'] = 'kite_equity_v1'
+            f.attrs['format'] = f'kite_{self.segment.lower()}_v1'
+            f.attrs['compression'] = config.HDF5_COMPRESSION
+            f.attrs['compression_level'] = config.HDF5_COMPRESSION_LEVEL
+            f.attrs['hdf5_cache_size'] = config.HDF5_RDCC_NBYTES
         
-        logger.info("Database initialized successfully")
+        logger.info(f"✅ Database initialized: {self.segment}")
     
-    # ========================================================================
-    # METADATA OPERATIONS
-    # ========================================================================
+    def _get_segment_exchanges(self) -> List[str]:
+        """Get list of exchanges for current segment"""
+        segment_exchange_map = {
+            'EQUITY': [Exchange.NSE.value, Exchange.BSE.value],
+            'DERIVATIVES': [Exchange.NFO.value, Exchange.BFO.value],
+            'COMMODITY': [Exchange.MCX.value],
+            'CURRENCY': [Exchange.CDS.value],
+        }
+        return segment_exchange_map.get(self.segment, [Exchange.NSE.value])
     
     def set_metadata(self, key: str, value: str):
-        """Set database metadata (stored as file attributes)"""
+        """Set database metadata"""
         with self.open_file('a') as f:
             f.attrs[key] = value
             f.attrs['last_updated'] = datetime.now().isoformat()
@@ -133,10 +178,6 @@ class HDF5Manager:
         with self.open_file('r') as f:
             return dict(f.attrs)
     
-    # ========================================================================
-    # MULTI-TIMEFRAME OHLCV OPERATIONS
-    # ========================================================================
-    
     def save_ohlcv(
         self,
         exchange: str,
@@ -149,11 +190,12 @@ class HDF5Manager:
         Save OHLCV data to database for a specific timeframe
         
         Args:
-            exchange: Exchange name (NSE, BSE)
+            exchange: Exchange name (NSE, BSE, NFO, etc.)
             symbol: Trading symbol
-            interval: Timeframe (15minute, 60minute, day)
+            interval: Timeframe (5minute, 15minute, 60minute, day)
             data: OHLCV data (list of dicts, numpy array, or DataFrame)
             overwrite: If True, replace existing data
+            validate: If True, validate data before saving
         
         Returns:
             True if successful
@@ -161,7 +203,9 @@ class HDF5Manager:
         try:
             # Convert interval to string if Enum
             if isinstance(interval, Interval):
-                interval = interval.value
+                interval_str = interval.value
+            else:
+                interval_str = interval
             
             # Convert data to numpy array
             if isinstance(data, list):
@@ -174,23 +218,24 @@ class HDF5Manager:
                 raise ValueError(f"Unsupported data type: {type(data)}")
             
             if len(arr) == 0:
-                logger.warning(f"Empty data array for {symbol} {interval}, nothing to save")
+                logger.warning(f"Empty data array for {symbol} {interval_str}, nothing to save")
                 return False
             
-            # Validate data
+            # Validate data if requested
             is_valid, stats = ValidationRules.validate_ohlcv_array(arr)
             if not is_valid:
-                logger.error(f"Data validation failed for {symbol} {interval}: {stats}")
+                logger.error(f"Data validation failed for {symbol} {interval_str}: {stats}")
+                logger.error(f"Invalid rows: {stats['invalid_details'][:3]}")
                 raise ValueError(f"Invalid OHLCV data: {stats['invalid_rows']} invalid rows")
             
             # Sort by timestamp
             arr = np.sort(arr, order='timestamp')
             
             # Get dataset path
-            path = self.structure.get_data_path(exchange, symbol, interval)
+            path = self.structure.get_data_path(exchange, symbol, interval_str)
             
-            # Get compression settings for this interval
-            comp_settings = self.compression.get_settings(interval, data_size=len(arr))
+            # Get compression filter and chunk size
+            comp_settings = self._get_compression_settings(interval_str, len(arr))
             
             # Save to database
             with self.open_file('a') as f:
@@ -203,9 +248,9 @@ class HDF5Manager:
                         logger.info(f"Overwriting existing dataset: {path}")
                     else:
                         # Append to existing data
-                        return self._append_ohlcv(f, path, arr)
+                        return self._append_ohlcv(f, path, arr, interval_str)
                 
-                # Create new dataset
+                # Create new dataset with blosc compression
                 dset = f.create_dataset(
                     path,
                     data=arr,
@@ -217,7 +262,7 @@ class HDF5Manager:
                 attrs = DatasetAttributes.ohlcv_attributes(
                     exchange=exchange,
                     symbol=symbol,
-                    interval=interval,
+                    interval=interval_str,
                     start_date=str(arr[0]['timestamp']),
                     end_date=str(arr[-1]['timestamp']),
                     row_count=len(arr),
@@ -228,38 +273,58 @@ class HDF5Manager:
                 # Update file-level last_updated
                 f.attrs['last_updated'] = datetime.now().isoformat()
             
-            logger.info(f"✅ Saved {len(arr)} records to {path}")
+            logger.info(f"✅ Saved {len(arr)} records to {path} [{config.HDF5_COMPRESSION}]")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error saving OHLCV data for {symbol} {interval}: {e}")
+            logger.error(f"❌ Error saving OHLCV data for {symbol} {interval_str}: {e}")
             raise
     
-    def _append_ohlcv(self, f: h5py.File, path: str, new_data: np.ndarray) -> bool:
-        """Append data to existing dataset (deduplicates by timestamp)"""
+    def _append_ohlcv(
+        self,
+        f: h5py.File,
+        path: str,
+        new_data: np.ndarray,
+        interval: str,
+    ) -> bool:
+        """
+        Append data to existing dataset (deduplicates by timestamp)
+        
+        Args:
+            f: Open HDF5 file handle
+            path: Dataset path
+            new_data: New data to append
+            interval: Data interval (for compression settings)
+        
+        Returns:
+            True if successful
+        """
         try:
             dset = f[path]
             existing_data = dset[:]
             
             # Merge and deduplicate by timestamp
             combined = np.concatenate([existing_data, new_data])
-            # Use unique on structured array
+            
+            # Get unique timestamps (keeps first occurrence)
             _, unique_indices = np.unique(combined['timestamp'], return_index=True)
             combined = combined[unique_indices]
             combined = np.sort(combined, order='timestamp')
             
-            # Replace dataset
-            compression = dset.compression
-            chunks = dset.chunks
+            # Backup settings
             attrs_backup = dict(dset.attrs)
             
+            # Delete old dataset
             del f[path]
+            
+            # Get compression settings for recreation
+            comp_settings = self._get_compression_settings(interval, len(combined))
+
             new_dset = f.create_dataset(
                 path,
                 data=combined,
                 dtype=EquityOHLCVSchema.DTYPE,
-                compression=compression,
-                chunks=chunks,
+                **comp_settings,
             )
             
             # Restore and update attributes
@@ -298,7 +363,7 @@ class HDF5Manager:
         Args:
             exchange: Exchange name
             symbol: Trading symbol
-            interval: Timeframe (15minute, 60minute, day)
+            interval: Timeframe (5minute, 15minute, 60minute, day)
             start_date: Filter start date (inclusive)
             end_date: Filter end date (inclusive)
             columns: Columns to retrieve (None = all)
@@ -310,9 +375,11 @@ class HDF5Manager:
         try:
             # Convert interval to string if Enum
             if isinstance(interval, Interval):
-                interval = interval.value
+                interval_str = interval.value
+            else:
+                interval_str = interval
             
-            path = self.structure.get_data_path(exchange, symbol, interval)
+            path = self.structure.get_data_path(exchange, symbol, interval_str)
             
             with self.open_file('r') as f:
                 if path not in f:
@@ -321,59 +388,64 @@ class HDF5Manager:
                 
                 dset = f[path]
                 
-                # Read data (memory-mapped for efficiency)
-                data = dset[:]
+                # Read data efficiently
+                if config.ENABLE_MMAP and dset.nbytes > config.MMAP_THRESHOLD_MB * 1024**2:
+                    # Use memory mapping for large datasets
+                    data = dset[:]
+                else:
+                    # Direct read for smaller datasets
+                    data = dset[:]
                 
                 # Filter by date range
                 if start_date or end_date:
                     mask = np.ones(len(data), dtype=bool)
                     
                     if start_date:
-                        # Convert datetime to Unix timestamp for comparison
                         start_ts = int(pd.Timestamp(start_date).timestamp())
                         mask &= (data['timestamp'] >= start_ts)
                     
                     if end_date:
-                        # Convert datetime to Unix timestamp for comparison
                         end_ts = int(pd.Timestamp(end_date).timestamp())
                         mask &= (data['timestamp'] <= end_ts)
                     
                     data = data[mask]
                 
-                # Select columns
+                # Select columns if specified
                 if columns:
                     data = data[columns]
                 
                 # Convert to DataFrame if requested
-                # Convert to DataFrame if requested
                 if as_dataframe:
                     df = pd.DataFrame(data)
+                    
                     if 'timestamp' in df.columns:
                         # Convert Unix timestamp to datetime (UTC)
                         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
                         
-                        # For intraday data, convert to Indian timezone
-                        # For daily data, remove timezone (just dates matter)
-                        interval_str = interval.value if isinstance(interval, Interval) else interval
+                        # Timezone handling based on interval
                         if interval_str != 'day':
-                            # Intraday: keep timezone-aware in IST
-                            df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
+                            # Intraday: convert to IST
+                            df['timestamp'] = df['timestamp'].dt.tz_convert(IST)
                         else:
-                            # Daily: remove timezone
+                            # Daily: remove timezone (date only)
                             df['timestamp'] = df['timestamp'].dt.tz_localize(None)
                         
+                        # Set timestamp as index
                         df = df.set_index('timestamp')
+                    
                     return df
-                
+                else:
+                    return data
+                    
         except Exception as e:
-            logger.error(f"❌ Error retrieving OHLCV data for {symbol} {interval}: {e}")
+            logger.error(f"❌ Error retrieving OHLCV data for {symbol} {interval_str}: {e}")
             return None
     
     def delete_ohlcv(
         self,
         exchange: str,
         symbol: str,
-        interval: Optional[Union[str, Interval]] = None
+        interval: Optional[Union[str, Interval]] = None,
     ) -> bool:
         """
         Delete OHLCV dataset(s)
@@ -390,9 +462,11 @@ class HDF5Manager:
             if interval:
                 # Delete specific interval
                 if isinstance(interval, Interval):
-                    interval = interval.value
+                    interval_str = interval.value
+                else:
+                    interval_str = interval
                 
-                path = self.structure.get_data_path(exchange, symbol, interval)
+                path = self.structure.get_data_path(exchange, symbol, interval_str)
                 
                 with self.open_file('a') as f:
                     if path in f:
@@ -420,10 +494,6 @@ class HDF5Manager:
         except Exception as e:
             logger.error(f"❌ Error deleting dataset: {e}")
             return False
-    
-    # ========================================================================
-    # MULTI-TIMEFRAME QUERY & SEARCH
-    # ========================================================================
     
     def list_symbols(self, exchange: Optional[str] = None) -> List[str]:
         """List all symbols in database"""
@@ -457,12 +527,19 @@ class HDF5Manager:
         
         return intervals
     
-    def get_data_info(self, exchange: str, symbol: str, interval: Union[str, Interval]) -> Dict:
+    def get_data_info(
+        self,
+        exchange: str,
+        symbol: str,
+        interval: Union[str, Interval],
+    ) -> Dict:
         """Get information about a dataset"""
         if isinstance(interval, Interval):
-            interval = interval.value
+            interval_str = interval.value
+        else:
+            interval_str = interval
         
-        path = self.structure.get_data_path(exchange, symbol, interval)
+        path = self.structure.get_data_path(exchange, symbol, interval_str)
         
         with self.open_file('r') as f:
             if path not in f:
@@ -470,14 +547,21 @@ class HDF5Manager:
             
             dset = f[path]
             
+            # Get compression info
+            if hasattr(dset, 'compression'):
+                compression_info = dset.compression
+            else:
+                compression_info = 'unknown'
+            
             return {
                 'path': path,
                 'exchange': exchange,
                 'symbol': symbol,
-                'interval': interval,
+                'interval': interval_str,
                 'rows': dset.shape[0],
                 'size_mb': round(dset.nbytes / (1024**2), 2),
-                'compression': dset.compression,
+                'compression': compression_info,
+                'chunks': dset.chunks,
                 'start_date': dset.attrs.get('start_date'),
                 'end_date': dset.attrs.get('end_date'),
                 'row_count': dset.attrs.get('row_count'),
@@ -517,6 +601,7 @@ class HDF5Manager:
         """Get comprehensive database statistics"""
         stats = {
             'file_size_mb': round(self.db_path.stat().st_size / (1024**2), 2),
+            'segment': self.segment,
             'exchanges': {},
             'total_symbols': 0,
             'total_datasets': 0,
@@ -525,6 +610,8 @@ class HDF5Manager:
             'db_version': self.get_metadata('db_version'),
             'created_at': self.get_metadata('created_at'),
             'last_updated': self.get_metadata('last_updated'),
+            'compression': self.get_metadata('compression'),
+            'compression_level': self.get_metadata('compression_level'),
         }
         
         with self.open_file('r') as f:
@@ -537,6 +624,7 @@ class HDF5Manager:
                 datasets_by_interval = {}
                 total_datasets = 0
                 total_rows = 0
+                total_size_mb = 0
                 
                 for symbol in symbols:
                     sym_group = exch_group[symbol]
@@ -545,13 +633,16 @@ class HDF5Manager:
                         datasets_by_interval[interval] = datasets_by_interval.get(interval, 0) + 1
                         total_datasets += 1
                         total_rows += dset.shape[0]
+                        total_size_mb += dset.nbytes / (1024**2)
                 
                 stats['exchanges'][exchange] = {
                     'symbols': len(symbols),
                     'datasets': total_datasets,
                     'rows': total_rows,
+                    'size_mb': round(total_size_mb, 2),
                     'intervals': datasets_by_interval,
                 }
+                
                 stats['total_symbols'] += len(symbols)
                 stats['total_datasets'] += total_datasets
                 stats['total_rows'] += total_rows
@@ -561,10 +652,6 @@ class HDF5Manager:
                     stats['intervals_summary'][interval] = stats['intervals_summary'].get(interval, 0) + count
         
         return stats
-    
-    # ========================================================================
-    # BACKUP & MAINTENANCE
-    # ========================================================================
     
     def create_backup(self, backup_path: Optional[Path] = None) -> Path:
         """
@@ -578,7 +665,7 @@ class HDF5Manager:
         """
         if backup_path is None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_path = config.BACKUP_DIR / f"kite_data_backup_{timestamp}.h5"
+            backup_path = config.BACKUP_DIR / f"{self.segment}_backup_{timestamp}.h5"
         
         try:
             # Close any open handles
@@ -594,6 +681,10 @@ class HDF5Manager:
             
             size_mb = round(backup_path.stat().st_size / (1024**2), 2)
             logger.info(f"✅ Backup created: {backup_path} ({size_mb} MB)")
+            
+            # Cleanup old backups
+            self._cleanup_old_backups()
+            
             return backup_path
             
         except Exception as e:
@@ -602,29 +693,83 @@ class HDF5Manager:
                 backup_path.unlink()
             raise
     
+    def _cleanup_old_backups(self):
+        """Remove old backups beyond MAX_BACKUPS limit"""
+        if not config.AUTO_BACKUP:
+            return
+        
+        try:
+            # Find all backups for this segment
+            pattern = f"{self.segment}_backup_*.h5"
+            backups = sorted(config.BACKUP_DIR.glob(pattern), key=lambda p: p.stat().st_mtime)
+            
+            # Remove oldest backups
+            while len(backups) > config.MAX_BACKUPS:
+                oldest = backups.pop(0)
+                oldest.unlink()
+                logger.info(f"Removed old backup: {oldest.name}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to cleanup old backups: {e}")
+    
     def optimize_database(self):
-        """Optimize database (repack to reduce size)"""
-        logger.info("Optimizing database (this may take a while)...")
+        """
+        Repack database to reclaim space from deleted datasets.
+        
+        Use this after:
+        - Deleting multiple symbols or intervals
+        - Database has grown due to accumulated deletes
+        
+        Note: 
+        - This does NOT improve compression (already optimal with blosc:lz4)
+        - Rewrites the entire file (can take time for large databases)
+        - HDF5 doesn't free space immediately on delete - this reclaims it
+        
+        Example:
+            manager.delete_ohlcv('NSE', 'OLDSTOCK')  # Space not freed yet
+            manager.delete_ohlcv('NSE', 'OLDSTOCK2')
+            # ... delete many more
+            manager.optimize_database()  # Now space is reclaimed
+        """
+        logger.info(f"Repacking database to reclaim deleted space: {self.db_path} (this may take a while)...")
         
         # Create temporary file
         temp_path = self.db_path.with_suffix('.tmp.h5')
         
         try:
             # Copy to temp file with repacking
-            with h5py.File(self.db_path, 'r') as src:
-                with h5py.File(temp_path, 'w') as dst:
-                    # Recursively copy all data
+            with self.open_file('r') as src:
+                with h5py.File(temp_path, 'w', **config.get_hdf5_options()) as dst:
+                    # Copy all groups and datasets
                     def copy_item(name, obj):
                         if isinstance(obj, h5py.Dataset):
-                            # Copy dataset with same compression
-                            src.copy(obj, dst, name=name)
+                            # Get interval from path for optimal chunking
+                            try:
+                                _, _, _, interval = name.strip('/').split('/')
+                            except:
+                                interval = 'day'
+                            
+                            # Get compression settings
+                            comp_settings = self._get_compression_settings(interval, obj.shape[0])
+
+                            new_dset = dst.create_dataset(
+                                name,
+                                data=obj[:],
+                                dtype=obj.dtype,
+                                **comp_settings,
+                            )
+                            
+                            # Copy attributes
+                            for k, v in obj.attrs.items():
+                                new_dset.attrs[k] = v
+                                
                         elif isinstance(obj, h5py.Group):
                             if name != '/':
                                 dst.create_group(name)
                     
                     src.visititems(copy_item)
                     
-                    # Copy metadata
+                    # Copy file-level metadata
                     for k, v in src.attrs.items():
                         dst.attrs[k] = v
                     
@@ -634,22 +779,20 @@ class HDF5Manager:
             old_size = self.db_path.stat().st_size / (1024**2)
             new_size = temp_path.stat().st_size / (1024**2)
             savings = old_size - new_size
+            savings_pct = (savings / old_size * 100) if old_size > 0 else 0
             
             # Replace original with optimized version
             self.db_path.unlink()
             temp_path.rename(self.db_path)
             
-            logger.info(f"✅ Database optimized: {old_size:.2f} MB → {new_size:.2f} MB (saved {savings:.2f} MB)")
+            logger.info(f"✅ Database optimized: {old_size:.2f} MB → {new_size:.2f} MB")
+            logger.info(f"   Saved {savings:.2f} MB ({savings_pct:.1f}%)")
             
         except Exception as e:
             logger.error(f"❌ Optimization failed: {e}")
             if temp_path.exists():
                 temp_path.unlink()
             raise
-    
-    # ========================================================================
-    # HELPER METHODS
-    # ========================================================================
     
     def _ensure_groups_exist(self, f: h5py.File, path: str):
         """Ensure all parent groups exist for a path"""
@@ -662,33 +805,91 @@ class HDF5Manager:
                 f.create_group(current)
     
     def _dataframe_to_array(self, df: pd.DataFrame) -> np.ndarray:
-        """Convert pandas DataFrame to structured numpy array (converts to UTC Unix timestamps)"""
+        """Convert pandas DataFrame to structured numpy array"""
         size = len(df)
         arr = create_empty_ohlcv_array(size)
         
-        # Map DataFrame columns to array fields
+        # Handle timestamp/date column
         if 'date' in df.columns:
-            # Convert to UTC Unix timestamp (int64)
             dates = pd.to_datetime(df['date'])
             if dates.dt.tz is not None:
-                # Convert to UTC first, then to Unix timestamp
                 dates = dates.dt.tz_convert('UTC')
             arr['timestamp'] = dates.astype('int64') // 10**9
+            
         elif 'timestamp' in df.columns:
             dates = pd.to_datetime(df['timestamp'])
             if dates.dt.tz is not None:
                 dates = dates.dt.tz_convert('UTC')
             arr['timestamp'] = dates.astype('int64') // 10**9
+            
         elif isinstance(df.index, pd.DatetimeIndex):
-            # Use index as timestamp
             dates = df.index
             if dates.tz is not None:
-                # Convert timezone-aware index to UTC
                 dates = dates.tz_convert('UTC')
             arr['timestamp'] = dates.astype('int64') // 10**9
         
+        # Copy OHLCV columns
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
                 arr[col] = df[col].values
         
         return arr
+
+
+# ========================================================================
+# MULTI-SEGMENT MANAGER
+# ========================================================================
+
+class MultiSegmentManager:
+    """
+    Manager for multiple HDF5 databases (one per segment)
+    
+    Usage:
+        manager = MultiSegmentManager()
+        
+        # Access specific segment
+        equity_mgr = manager.get_manager('EQUITY')
+        equity_mgr.save_ohlcv(...)
+        
+        # Or use directly
+        manager.save_ohlcv('EQUITY', 'NSE', 'RELIANCE', 'day', data)
+    """
+    
+    def __init__(self):
+        self._managers: Dict[str, HDF5Manager] = {}
+    
+    def get_manager(self, segment: str) -> HDF5Manager:
+        """Get or create manager for specific segment"""
+        segment = segment.upper()
+        
+        if segment not in self._managers:
+            self._managers[segment] = HDF5Manager(segment)
+        
+        return self._managers[segment]
+    
+    def save_ohlcv(self, segment: str, *args, **kwargs) -> bool:
+        """Save OHLCV data to specific segment"""
+        mgr = self.get_manager(segment)
+        return mgr.save_ohlcv(*args, **kwargs)
+    
+    def get_ohlcv(self, segment: str, *args, **kwargs):
+        """Get OHLCV data from specific segment"""
+        mgr = self.get_manager(segment)
+        return mgr.get_ohlcv(*args, **kwargs)
+    
+    def get_all_stats(self) -> Dict[str, Dict]:
+        """Get statistics for all segments"""
+        stats = {}
+        
+        for segment in ['EQUITY', 'DERIVATIVES', 'COMMODITY', 'CURRENCY']:
+            db_path = config.get_hdf5_path(segment)
+            if db_path.exists():
+                mgr = self.get_manager(segment)
+                stats[segment] = mgr.get_database_stats()
+        
+        return stats
+    
+    def close_all(self):
+        """Close all managers and clear cache"""
+        self._managers.clear()
+        gc.collect()
