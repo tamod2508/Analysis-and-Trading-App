@@ -1,15 +1,10 @@
 """
-Constants and enumerations for Kite Connect API
+Constants and enumerations
 """
 
 from enum import Enum
 
-# ============================================================================
-# KITE CONNECT API CONSTANTS
-# ============================================================================
-
 class Exchange(str, Enum):
-    """Exchange codes"""
     NSE = "NSE"
     BSE = "BSE"
     NFO = "NFO"
@@ -18,7 +13,6 @@ class Exchange(str, Enum):
     MCX = "MCX"
 
 class Interval(str, Enum):
-    """Candlestick intervals"""
     MINUTE = "minute"
     MINUTE_3 = "3minute"
     MINUTE_5 = "5minute"
@@ -29,30 +23,20 @@ class Interval(str, Enum):
     DAY = "day"
 
 class InstrumentType(str, Enum):
-    """Instrument types"""
     EQ = "EQ"  # Equity
     FUT = "FUT"  # Futures
     CE = "CE"  # Call Option
     PE = "PE"  # Put Option
 
-# ============================================================================
-# HDF5 DATASET NAMES
-# ============================================================================
 
 HDF5_DATASETS = {
-    'METADATA': '/metadata',
     'INSTRUMENTS': '/instruments',
-    'HISTORICAL_DATA': '/historical_data',
-    'OHLC_DATA': '/ohlc',
+    'DATA': '/data',
 }
-
-# ============================================================================
-# DATA VALIDATION CONSTANTS
-# ============================================================================
 
 # Required columns for historical data
 REQUIRED_COLUMNS = [
-    'date', 'open', 'high', 'low', 'close', 'volume'
+    'timestamp', 'open', 'high', 'low', 'close', 'volume'
 ]
 
 # Optional columns
@@ -62,18 +46,14 @@ OPTIONAL_COLUMNS = [
 
 # Data type mappings
 COLUMN_DTYPES = {
-    'date': 'datetime64[ns]',
-    'open': 'float64',
-    'high': 'float64',
-    'low': 'float64',
-    'close': 'float64',
+    'timestamp': 'int64',
+    'open': 'float32',
+    'high': 'float32',
+    'low': 'float32',
+    'close': 'float32',
     'volume': 'int64',
     'oi': 'int64',
 }
-
-# ============================================================================
-# UI CONSTANTS
-# ============================================================================
 
 # Chart types
 CHART_TYPES = [
@@ -93,6 +73,7 @@ TIME_RANGES = {
     "1 Year": 365,
     "2 Years": 730,
     "5 Years": 1825,
+    "10 years": 3650,
     "All Time": None,
 }
 
@@ -103,10 +84,6 @@ EXPORT_FORMATS = [
     "JSON",
     "Parquet"
 ]
-
-# ============================================================================
-# ERROR MESSAGES
-# ============================================================================
 
 ERROR_MESSAGES = {
     'NO_API_KEY': 'API Key not configured. Please add it to .env file.',
@@ -119,10 +96,6 @@ ERROR_MESSAGES = {
     'VALIDATION_ERROR': 'Data validation failed.',
 }
 
-# ============================================================================
-# SUCCESS MESSAGES
-# ============================================================================
-
 SUCCESS_MESSAGES = {
     'DATA_FETCHED': 'Historical data fetched successfully!',
     'DATA_SAVED': 'Data saved to database successfully!',
@@ -130,10 +103,6 @@ SUCCESS_MESSAGES = {
     'EXPORT_COMPLETE': 'Data exported successfully!',
     'LOGIN_SUCCESS': 'Login successful!',
 }
-
-# ============================================================================
-# API LIMITS
-# ============================================================================
 
 API_LIMITS = {
     'MAX_RECORDS_PER_REQUEST': 1000,

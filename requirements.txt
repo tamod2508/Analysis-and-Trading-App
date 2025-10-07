@@ -82,3 +82,4 @@ tzdata==2025.2
 urllib3==2.5.0
 zipp==3.23.0
 zope.interface==8.0.1
+hdf5plugin>=4.0.0

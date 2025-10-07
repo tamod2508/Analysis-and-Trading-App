@@ -9,16 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 import pandas as pd
 import pytz
-class Interval(str, Enum):
-    """Candlestick intervals"""
-    MINUTE = "minute"
-    MINUTE_3 = "3minute"
-    MINUTE_5 = "5minute"
-    MINUTE_10 = "10minute"
-    MINUTE_15 = "15minute"
-    MINUTE_30 = "30minute"
-    MINUTE_60 = "60minute"
-    DAY = "day"
+from config.constants import Interval, Exchange
 
 PRIMARY_INTERVALS = [
     Interval.DAY,         
@@ -166,12 +157,6 @@ class HDF5Structure:
         if len(parts) >= 4 and parts[0] == 'data':
             return parts[1], parts[2], parts[3]
         raise ValueError(f"Invalid data path: {path}")
-    
-    @staticmethod
-    def get_metadata_path(key: str) -> str:
-        """Get path for metadata entry"""
-        return f'/metadata/{key}'
-
 
 # ============================================================================
 # DATASET ATTRIBUTES

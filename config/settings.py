@@ -15,7 +15,6 @@ load_dotenv()
 
 @dataclass
 class AppConfig:
-    """M4 24GB - EXTREME PERFORMANCE MODE - NO LIMITS"""
 
     BASE_DIR: Path = Path(__file__).parent.parent
     DATA_DIR: Path = BASE_DIR / "data"
@@ -24,8 +23,8 @@ class AppConfig:
     LOGS_DIR: Path = BASE_DIR / "logs"
 
     HDF5_FILE: Path = DATA_DIR / "kite_data.h5"
-    HDF5_COMPRESSION: str = "lzf"
-    HDF5_COMPRESSION_LEVEL: int = 7
+    HDF5_COMPRESSION: str = "blosc:lz4"  # Fast compression
+    HDF5_COMPRESSION_LEVEL: int = 5  # Balanced compression level
 
     HDF5_CACHE_SIZE: int = 100000  # Pages (~400MB cache)
     HDF5_RDCC_NBYTES: int = 2147483648  # 2GB read cache
@@ -50,13 +49,13 @@ class AppConfig:
     RETRY_DELAY: int = 2  # Quick retry
     RETRY_BACKOFF: float = 1.3  # Gentler backoff
 
-    BATCH_SIZE: int = 1000
+    BATCH_SIZE: int = 500
     BATCH_PAUSE_SECONDS: int = 0.5
     BATCH_MEMORY_CHECK: bool = True
     BATCH_GC_INTERVAL: int = 200
 
-    SHOW_PROGRESS_EVERY: int = 50
-    LOG_PROGRESS_EVERY: int = 200
+    SHOW_PROGRESS_EVERY: int = 100
+    LOG_PROGRESS_EVERY: int = 500
 
     # Historical data
     MAX_HISTORICAL_RECORDS_PER_REQUEST: int = 1000
@@ -93,11 +92,10 @@ class AppConfig:
     USE_MULTIPROCESSING: bool = True
     MULTIPROCESSING_METHOD: str = "spawn"
 
-    # M4 has 10 cores
     PANDAS_COMPUTE_THREADS: int = 12  # Over-provision for better scheduling
     NUMPY_THREADS: int = 12
 
-    MAX_MEMORY_PERCENT: float = 0.92  # Use 92% of RAM
+    MAX_MEMORY_PERCENT: float = 0.87  # Use 87% of RAM
 
     # Memory monitoring
     ENABLE_MEMORY_MONITORING: bool = True
@@ -119,10 +117,10 @@ class AppConfig:
 
     AUTO_BACKUP: bool = True
     BACKUP_BEFORE_FETCH: bool = True
-    MAX_BACKUPS: int = 15
-    BACKUP_COMPRESSION: bool = True
+    MAX_BACKUPS: int = 3
+    BACKUP_COMPRESSION: bool = False
     BACKUP_ASYNC: bool = True
-    BACKUP_WORKERS: int = 4  # Parallel backup
+    BACKUP_WORKERS: int = 3  # Parallel backup
 
     STREAMLIT_CACHE_TTL: int = 7200  # 2 hours
     STREAMLIT_CACHE_MAX_ENTRIES: int = 500
@@ -145,11 +143,6 @@ class AppConfig:
     # Parallel I/O
     ENABLE_PARALLEL_IO: bool = True
     PARALLEL_IO_WORKERS: int = 8
-
-    # Fast mode flags
-    FAST_MODE: bool = True
-    TURBO_MODE: bool = True
-    EXTREME_MODE: bool = True
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
