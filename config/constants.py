@@ -3,6 +3,8 @@ Constants and enumerations
 """
 
 from enum import Enum
+import pytz
+import pandas as pd
 
 class Exchange(str, Enum):
     NSE = "NSE"
@@ -22,11 +24,47 @@ class Interval(str, Enum):
     MINUTE_60 = "60minute"
     DAY = "day"
 
-class InstrumentType(str, Enum):
-    EQ = "EQ"  # Equity
-    FUT = "FUT"  # Futures
-    CE = "CE"  # Call Option
-    PE = "PE"  # Put Option
+class InstrumentType(str, Enum):  # ← ADD THIS (it's exported but not defined!)
+    EQ = "EQ"   # Equity
+    FUT = "FUT" # Futures
+    CE = "CE"   # Call Option
+    PE = "PE"   # Put Option
+
+class Segment(str, Enum):
+    # Equity
+    EQUITY = "EQUITY"
+    # Future: DERIVATIVES, COMMODITY, CURRENCY
+
+    # Per-request limits for each interval (from Kite API)
+INTERVAL_FETCH_LIMITS = {
+    Interval.MINUTE: 60,
+    Interval.MINUTE_3: 100,
+    Interval.MINUTE_5: 100,
+    Interval.MINUTE_10: 100,
+    Interval.MINUTE_15: 200,
+    Interval.MINUTE_30: 200,
+    Interval.MINUTE_60: 400,
+    Interval.DAY: 2000,
+}
+
+PRIMARY_INTERVALS = {
+    Segment.EQUITY: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5],
+    # Future: Segment.DERIVATIVES: [...], etc.
+}
+
+DERIVED_INTERVALS = {
+    Interval.MINUTE_10: Interval.MINUTE_5,   # Resample from 5-min
+    Interval.MINUTE_30: Interval.MINUTE_15  # Resample from 15-min
+}
+
+# Historical data availability dates
+IST = pytz.timezone('Asia/Kolkata')
+
+HISTORICAL_DATA_START = {
+    'NSE_intraday': pd.Timestamp('2015-02-02', tz=IST),
+    'BSE_intraday': pd.Timestamp('2016-03-18', tz=IST),
+    'daily': pd.Timestamp('2005-01-01', tz=IST),
+}
 
 
 HDF5_DATASETS = {
@@ -64,6 +102,14 @@ CHART_TYPES = [
     "OHLC"
 ]
 
+CHUNK_SIZES = {
+    Interval.DAY: 5000,        # Large chunks for daily
+    Interval.MINUTE_60: 2000,  # Medium for hourly
+    Interval.MINUTE_15: 1000,  # Smaller for 15-min
+    Interval.MINUTE_5: 1000,   # Smaller for 5-min
+    Interval.MINUTE: 500,      # Smallest for minute
+}
+
 # Time ranges for quick selection
 TIME_RANGES = {
     "1 Week": 7,
@@ -76,6 +122,18 @@ TIME_RANGES = {
     "10 years": 3650,
     "All Time": None,
 }
+
+# Price validation limits
+MIN_PRICE = 0.01          # Minimum valid price (₹0.01)
+MAX_PRICE = 1_000_000.0   # Maximum valid price (₹10 lakh - sanity check)
+
+# Volume validation limits
+MIN_VOLUME = 0                 # Minimum volume (can be zero)
+MAX_VOLUME = 10_000_000_000    # Maximum volume (10 billion shares)
+
+# Date validation limits
+MIN_DATE = int(pd.Timestamp('2000-01-01').timestamp())  # Earliest valid date
+MAX_DATE = int(pd.Timestamp('2099-12-31').timestamp())  # Latest valid date
 
 # Export formats
 EXPORT_FORMATS = [

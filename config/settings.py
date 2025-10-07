@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from dotenv import load_dotenv
 import psutil
+from .constants import Interval, CHUNK_SIZES
 
 # Load environment variables
 load_dotenv()
@@ -22,7 +23,8 @@ class AppConfig:
     EXPORTS_DIR: Path = BASE_DIR / "exports"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
-    HDF5_FILE: Path = DATA_DIR / "kite_data.h5"
+    HDF5_DIR: Path = DATA_DIR / "hdf5"
+    HDF5_FILE_PATTERN: str = "{segment}.h5"
     HDF5_COMPRESSION: str = "blosc:lz4"  # Fast compression
     HDF5_COMPRESSION_LEVEL: int = 5  # Balanced compression level
 
@@ -159,6 +161,7 @@ class AppConfig:
         # Create directories
         directories = [
             self.DATA_DIR,
+            self.HDF5_DIR,
             self.BACKUP_DIR,
             self.EXPORTS_DIR / "csv",
             self.EXPORTS_DIR / "reports",
@@ -213,10 +216,6 @@ class AppConfig:
         cpu_count = os.cpu_count()
 
     @property
-    def hdf5_path(self) -> str:
-        return str(self.HDF5_FILE)
-
-    @property
     def is_configured(self) -> bool:
         return bool(self.KITE_API_KEY and self.KITE_API_SECRET)
 
@@ -243,6 +242,52 @@ class AppConfig:
             "rdcc_w0": self.HDF5_RDCC_W0,
             "driver": self.HDF5_DRIVER,
             "meta_block_size": self.HDF5_META_BLOCK_SIZE,
+        }
+    def get_hdf5_path(self, segment: str) -> Path:
+        """Get HDF5 file path for specific segment"""
+        filename = self.HDF5_FILE_PATTERN.format(segment=segment)
+        return self.HDF5_DIR / filename
+
+    @property
+    def hdf5_path(self) -> str:
+        """Default equity database path"""
+        return str(self.get_hdf5_path('EQUITY'))
+
+    def get_hdf5_creation_settings(self, interval: str, data_size: int = None) -> dict:
+        """
+        Get HDF5 dataset creation settings for specific interval
+
+        Args:
+            interval: Data interval (day, 5minute, etc.)
+            data_size: Optional. Size of data to determine chunk size
+
+        Returns:
+            Dict with compression, chunks, shuffle for h5py.create_dataset()
+        """
+
+        # Convert string to Interval enum if needed
+        if isinstance(interval, str):
+            try:
+                interval_enum = Interval(interval)
+            except ValueError:
+                interval_enum = Interval.DAY  # Default
+        else:
+            interval_enum = interval
+
+        # Get chunk size for this interval
+        default_chunk_size = CHUNK_SIZES.get(interval_enum, 1000)
+
+        if data_size is not None:
+            # Don't make chunks bigger than data
+            chunk_size = min(default_chunk_size, max(10, data_size))
+        else:
+            chunk_size = default_chunk_size
+
+        return {
+            'compression': self.HDF5_COMPRESSION,
+            'compression_opts': self.HDF5_COMPRESSION_LEVEL,
+            'shuffle': True,  # Always use shuffle for better compression
+            'chunks': (chunk_size,)
         }
 
 

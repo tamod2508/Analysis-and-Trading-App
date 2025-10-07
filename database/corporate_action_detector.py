@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class CorporateActionDetector:
     """
     Detects corporate actions by analyzing price movements
-    Uses 20% circuit breaker rule for Indian markets
+    Uses 20% circuit breaker rule
     """
 
     #Circuit limits

@@ -88,13 +88,13 @@ class ConfigOptimizer:
             'DASK_WORKERS': 3,
             'BACKUP_WORKERS': 2,
 
-            'BATCH_PAUSE_SECONDS': 1,
+            'BATCH_PAUSE_SECONDS': 2,
             'SHOW_PROGRESS_EVERY': 20,
             'LOG_PROGRESS_EVERY': 100,
 
             'MEMORY_CHECK_INTERVAL': 60,
             'MEMORY_WARNING_THRESHOLD': 0.88,
-            'MEMORY_CRITICAL_THRESHOLD': 0.96,
+            'MEMORY_CRITICAL_THRESHOLD': 0.90,
 
             'STREAMLIT_CACHE_TTL': 3600,
             'STREAMLIT_CACHE_MAX_ENTRIES': 100,
@@ -224,7 +224,7 @@ class ConfigOptimizer:
         }
 
 
-# Auto-configure on import (silently)
+# Auto-configure on import
 optimizer = ConfigOptimizer()
 
 
