@@ -40,7 +40,7 @@
 ### **Goals:**
 
 * Build comprehensive data fetching interface
-* Multi-segment support (Equity, Derivatives, Commodity, Currency)
+* Multi-segment support (Equity, Derivatives)
 * Bulk symbol import from CSV
 * Progress tracking for long fetches
 * Historical data management
@@ -48,8 +48,8 @@
 ### **Features to implement:**
 
 1. **Data Management Dashboard:**
-   * Select segment (Equity/Derivatives/Commodity/Currency)
-   * Exchange selection (NSE/BSE/MCX/CDS)
+   * Select segment (Equity/Derivatives)
+   * Exchange selection (NSE/BSE/NFO/BFO)
    * Symbol search with autocomplete
    * Date range picker
    * Interval selection (minute/5min/15min/day)

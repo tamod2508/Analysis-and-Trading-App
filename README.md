@@ -14,7 +14,7 @@ A personal desktop application for fetching, storing, and analyzing historical t
 
 ## 🛠️ Tech Stack
 
-- **Frontend:** Streamlit
+- **Frontend:** Flask
 - **Data Storage:** HDF5 (via h5py)
 - **API Client:** KiteConnect Python library
 - **Visualization:** Plotly, Matplotlib

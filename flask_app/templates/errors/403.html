@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block title %}403 - Forbidden{% endblock %}
+
+{% block content %}
+<div class="text-center mt-4">
+    <h1>403</h1>
+    <h2 class="mt-3">Access Forbidden</h2>
+    <p class="secondary-text mt-2">You don't have permission to access this resource.</p>
+    <a href="{{ url_for('dashboard.home') }}" class="btn btn-primary mt-3">
+        Go to Home
+    </a>
+</div>
+{% endblock %}

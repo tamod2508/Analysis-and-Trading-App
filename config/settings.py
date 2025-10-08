@@ -168,7 +168,7 @@ class BaseConfig:
     BACKUP_ASYNC: bool = True
     BACKUP_WORKERS: int = 3
 
-    # Streamlit caching
+    # Flask caching
     STREAMLIT_CACHE_TTL: int = 7200
     STREAMLIT_CACHE_MAX_ENTRIES: int = 500
 

@@ -11,9 +11,7 @@ class Exchange(str, Enum):
     NSE = "NSE"
     BSE = "BSE"
     NFO = "NFO"
-    CDS = "CDS"
     BFO = "BFO"
-    MCX = "MCX"
 
 class Interval(str, Enum):
     MINUTE = "minute"
@@ -33,9 +31,7 @@ class InstrumentType(str, Enum):  # ← ADD THIS (it's exported but not defined!
 
 class Segment(str, Enum):
     EQUITY = "EQUITY"              # Equity stocks (NSE, BSE)
-    DERIVATIVES = "DERIVATIVES"    # F&O (NFO, BFO, CDS)
-    COMMODITY = "COMMODITY"        # Commodities (MCX)
-    CURRENCY = "CURRENCY"          # Currency derivatives (CDS)
+    DERIVATIVES = "DERIVATIVES"    # F&O (NFO, BFO)
 
 class CompressionType(str, Enum):
     """HDF5 compression algorithms"""
@@ -52,16 +48,12 @@ EXCHANGE_TO_SEGMENT = {
     Exchange.BSE: Segment.EQUITY,
     Exchange.NFO: Segment.DERIVATIVES,
     Exchange.BFO: Segment.DERIVATIVES,
-    Exchange.MCX: Segment.COMMODITY,
-    Exchange.CDS: Segment.CURRENCY,
 }
 
 # Reverse mapping: Segment to Exchanges
 SEGMENT_TO_EXCHANGES = {
     Segment.EQUITY: [Exchange.NSE, Exchange.BSE],
     Segment.DERIVATIVES: [Exchange.NFO, Exchange.BFO],
-    Segment.COMMODITY: [Exchange.MCX],
-    Segment.CURRENCY: [Exchange.CDS],
 }
 
 # Validation limits dataclass
@@ -90,20 +82,6 @@ VALIDATION_LIMITS = {
         max_volume=10_000_000_000,
         allow_zero_prices=True       # Allow ₹0 for expired options
     ),
-    Segment.COMMODITY: ValidationLimits(
-        min_price=0.00,              # Commodities can theoretically hit zero
-        max_price=100_000.0,
-        min_volume=0,
-        max_volume=10_000_000_000,
-        allow_zero_prices=True
-    ),
-    Segment.CURRENCY: ValidationLimits(
-        min_price=0.00,              # Currency options can expire worthless
-        max_price=100_000.0,
-        min_volume=0,
-        max_volume=10_000_000_000,
-        allow_zero_prices=True
-    ),
 }
 
 # Per-request limits for each interval (from Kite API)
@@ -121,8 +99,6 @@ INTERVAL_FETCH_LIMITS = {
 PRIMARY_INTERVALS = {
     Segment.EQUITY: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5],
     Segment.DERIVATIVES: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5, Interval.MINUTE],
-    Segment.COMMODITY: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5, Interval.MINUTE],
-    Segment.CURRENCY: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5, Interval.MINUTE],
 }
 
 DERIVED_INTERVALS = {

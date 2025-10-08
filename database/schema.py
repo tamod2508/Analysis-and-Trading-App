@@ -89,8 +89,6 @@ class HDF5Structure:
     Database files by segment:
     - EQUITY.h5: NSE + BSE stocks
     - DERIVATIVES.h5: NFO + BFO options/futures
-    - COMMODITY.h5: MCX commodities (Gold, Silver, Crude, etc.)
-    - CURRENCY.h5: CDS currency derivatives (USDINR, EURINR, etc.)
 
     Structure (same for all):
     /
@@ -98,9 +96,7 @@ class HDF5Structure:
     │   ├── NSE/              (NSE instrument metadata)
     │   ├── BSE/              (BSE instrument metadata)
     │   ├── NFO/              (NFO instrument metadata - F&O)
-    │   ├── BFO/              (BFO instrument metadata - BSE F&O)
-    │   ├── MCX/              (MCX instrument metadata - Commodities)
-    │   └── CDS/              (CDS instrument metadata - Currency)
+    │   └── BFO/              (BFO instrument metadata - BSE F&O)
     │
     └── data/
         ├── NSE/              (NSE equity data)
@@ -120,22 +116,8 @@ class HDF5Structure:
         │       ├── 15minute/
         │       ├── 60minute/
         │       └── day/
-        ├── BFO/              (BFO derivatives data)
-        │   └── {symbol}/
-        │       └── day/
-        ├── MCX/              (MCX commodity data)
-        │   └── {symbol}/     (e.g., GOLDM25OCTFUT, CRUDEOIL25NOVFUT)
-        │       ├── minute/
-        │       ├── 5minute/
-        │       ├── 15minute/
-        │       ├── 60minute/
-        │       └── day/
-        └── CDS/              (CDS currency data)
-            └── {symbol}/     (e.g., USDINR25OCTFUT)
-                ├── minute/
-                ├── 5minute/
-                ├── 15minute/
-                ├── 60minute/
+        └── BFO/              (BFO derivatives data)
+            └── {symbol}/
                 └── day/
 
     Storage Strategy:
@@ -149,18 +131,6 @@ class HDF5Structure:
     - Schema: OptionsOHLCVSchema (includes OI)
     - Symbol naming: NIFTY25OCT24950CE, BANKNIFTY25NOV51500PE
 
-    COMMODITY:
-    - Commodity futures: Store from MCX
-    - Schema: OptionsOHLCVSchema (includes OI)
-    - Symbol naming: GOLDM25OCTFUT, CRUDEOIL25NOVFUT, SILVER25DECFUT
-    - Commodities: Gold, Silver, Crude Oil, Natural Gas, Copper, etc.
-
-    CURRENCY:
-    - Currency futures: Store from CDS (Currency Derivatives Segment)
-    - Schema: OptionsOHLCVSchema (includes OI)
-    - Symbol naming: USDINR25OCTFUT, EURINR25NOVFUT
-    - Pairs: USDINR, EURINR, GBPINR, JPYINR
-
     Examples:
         EQUITY.h5:
             /instruments/NSE/
@@ -171,16 +141,6 @@ class HDF5Structure:
             /instruments/NFO/
             /data/NFO/NIFTY25OCT24950CE/minute
             /data/NFO/BANKNIFTY25NOV51500PE/day
-
-        COMMODITY.h5:
-            /instruments/MCX/
-            /data/MCX/GOLDM25OCTFUT/minute
-            /data/MCX/CRUDEOIL25NOVFUT/day
-
-        CURRENCY.h5:
-            /instruments/CDS/
-            /data/CDS/USDINR25OCTFUT/minute
-            /data/CDS/EURINR25NOVFUT/day
     """
 
     # Root groups

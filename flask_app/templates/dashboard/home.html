@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - {{ app_name }}{% endblock %}
+
+{% block content %}
+
+{% if not current_user.is_authenticated %}
+    <!-- Welcome screen for non-authenticated users -->
+    <div class="text-center fade-in" style="margin: 5rem 0;">
+        <h1 style="border: none;">Kite Data Manager</h1>
+        <p class="secondary-text" style="font-size: 1.2rem; margin-top: 1rem;">
+            Historical Data Platform for Zerodha Kite Connect
+        </p>
+        <a href="{{ url_for('auth.login') }}" class="btn btn-primary mt-3" style="padding: 0.75rem 2rem; font-size: 1.1rem;">
+            Login to Get Started
+        </a>
+    </div>
+{% else %}
+    <!-- Dashboard for authenticated users -->
+    <div class="fade-in">
+        <div class="text-center" style="margin: 3rem 0;">
+            <h1 style="border: none;">Welcome to Kite Data Manager</h1>
+            <p class="secondary-text" style="font-size: 1.2rem; margin-top: 1rem;">
+                Your historical trading data platform
+            </p>
+        </div>
+
+        <!-- Summary Statistics Cards -->
+        <div class="flex" style="gap: 2rem; justify-content: center; margin-top: 3rem; flex-wrap: wrap;">
+            <div class="metric-card" style="min-width: 200px;">
+                <div class="metric-label">Total Database Size</div>
+                <div class="metric-value">{{ db_stats._summary.total_size_mb | format_size }}</div>
+                <div class="metric-info">All Segments</div>
+            </div>
+
+            <div class="metric-card" style="min-width: 200px;">
+                <div class="metric-label">Active Databases</div>
+                <div class="metric-value">{{ db_stats._summary.active_count }} / {{ db_stats._summary.total_segments }}</div>
+                <div class="metric-info">
+                    {% set active_names = [] %}
+                    {% for name, data in db_stats.items() if name != '_summary' and data.is_active %}
+                        {% set _ = active_names.append(name.capitalize()) %}
+                    {% endfor %}
+                    {{ active_names | join(', ') if active_names else 'None' }}
+                </div>
+            </div>
+
+            <div class="metric-card" style="min-width: 200px;">
+                <div class="metric-label">Total Instruments</div>
+                <div class="metric-value">{{ db_stats._summary.total_symbols | format_number }}</div>
+                <div class="metric-info">Across All Segments</div>
+            </div>
+
+            <div class="metric-card" style="min-width: 200px;">
+                <div class="metric-label">Total Exchanges</div>
+                <div class="metric-value">{{ db_stats._summary.all_exchanges | length }}</div>
+                <div class="metric-info">{{ db_stats._summary.all_exchanges | join(', ') }}</div>
+            </div>
+        </div>
+
+        <!-- Database Overview Section -->
+        <div style="margin-top: 4rem;">
+            <h2 style="text-align: center; color: var(--color-accent); border-bottom: 2px solid var(--color-accent); padding-bottom: 1rem; margin-bottom: 2rem;">
+                Database Overview
+            </h2>
+
+            <div class="grid grid-cols-2 gap-3">
+                {% for segment_name in ['EQUITY', 'DERIVATIVES'] %}
+                    {% set data = db_stats[segment_name] %}
+                    {% set is_active = data.is_active %}
+
+                    <div class="card fade-in" style="{% if is_active %}border-left: 3px solid var(--color-success);{% else %}opacity: 0.7;{% endif %}">
+                        <div class="flex" style="justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="color: var(--color-accent); margin: 0; border: none;">{{ segment_name }}</h3>
+                            {% if is_active %}
+                                <span class="status-badge authenticated">
+                                    <span class="status-indicator status-online"></span>
+                                    Active
+                                </span>
+                            {% else %}
+                                <span class="status-badge not-authenticated">
+                                    <span class="status-indicator status-offline"></span>
+                                    {{ data.status }}
+                                </span>
+                            {% endif %}
+                        </div>
+
+                        <div class="secondary-text mb-2">{{ data.description }}</div>
+
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+                            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 0.75rem;">
+                                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">DATABASE SIZE</div>
+                                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">{{ data.size_mb | format_size }}</div>
+                            </div>
+
+                            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 0.75rem;">
+                                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">
+                                    {% if segment_name == 'EQUITY' %}NO. OF STOCKS
+                                    {% elif segment_name == 'DERIVATIVES' %}NO. OF CONTRACTS
+                                    {% else %}NO. OF INSTRUMENTS{% endif %}
+                                </div>
+                                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">{{ data.total_symbols | format_number }}</div>
+                            </div>
+
+                            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 0.75rem;">
+                                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">EXCHANGES</div>
+                                <div style="color: var(--color-text-primary); font-size: 0.875rem; font-weight: 500;">
+                                    {{ data.exchanges | join(', ') if data.exchanges else 'None' }}
+                                </div>
+                            </div>
+
+                            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 0.75rem;">
+                                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">TOTAL DATASETS</div>
+                                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">{{ data.total_datasets | format_number }}</div>
+                            </div>
+                        </div>
+
+                        {% if is_active %}
+                            <div style="background-color: rgba(230, 184, 101, 0.1); border: 1px solid rgba(230, 184, 101, 0.3); border-radius: var(--radius-sm); padding: 0.75rem; margin-top: 1rem;">
+                                <div style="color: var(--color-accent); font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem;">ℹ️ DATABASE INFORMATION</div>
+                                <div class="secondary-text" style="font-size: 0.75rem; line-height: 1.5;">
+                                    This database contains historical OHLCV data for {{ data.description.lower() }}. Data is stored in HDF5 format with multiple timeframe intervals.
+                                </div>
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+{% endif %}
+
+{% endblock %}

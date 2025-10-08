@@ -43,9 +43,7 @@ data/
 │   │   └── metadata       # Last updated, record count
 │   ├── /BSE/              # BSE instruments
 │   ├── /NFO/              # Derivatives
-│   ├── /BFO/              # BSE derivatives
-│   ├── /MCX/              # Commodities
-│   └── /CDS/              # Currency derivatives
+│   └── /BFO/              # BSE derivatives
 ```
 
 ### Auto-Refresh Logic
@@ -75,8 +73,7 @@ print(f"RELIANCE token: {token}")
 
 # Works for all exchanges
 nifty_token = client.lookup_instrument_token('NFO', 'NIFTY25OCTFUT')
-gold_token = client.lookup_instrument_token('MCX', 'GOLDM25OCTFUT')
-usdinr_token = client.lookup_instrument_token('CDS', 'USDINR25OCTFUT')
+bse_token = client.lookup_instrument_token('BSE', 'SENSEX')
 ```
 
 ### Get Full Instrument Details
@@ -139,7 +136,7 @@ python scripts/update_instruments.py
 **Update specific exchanges:**
 ```bash
 python scripts/update_instruments.py NSE BSE
-python scripts/update_instruments.py NFO MCX CDS
+python scripts/update_instruments.py NFO BFO
 ```
 
 **Update and export to Excel:**
@@ -169,9 +166,9 @@ INSTRUMENTS DATABASE STATUS
 
 📊 Database Overview:
   Location: /Users/atm/Desktop/kite_app/data/instruments.h5
-  File Size: 12.5 MB
-  Total Exchanges: 6
-  Total Instruments: 45,123
+  File Size: 8.5 MB
+  Total Exchanges: 4
+  Total Instruments: 32,500
 
 ======================================================================
 EXCHANGE DETAILS
@@ -205,7 +202,7 @@ db = InstrumentsDB()
 # Export all exchanges to a single Excel file (multiple sheets)
 db.export_all_to_excel()
 # Creates: exports/all_instruments.xlsx
-# Sheets: NSE, BSE, NFO, BFO, MCX, CDS
+# Sheets: NSE, BSE, NFO, BFO 
 ```
 
 **Use case**: Open in Excel, filter/search symbols, share with team
@@ -271,12 +268,6 @@ client.fetch_equity_by_symbol('RELIANCE', ...)
 
 # Derivatives lookup (checks NFO/BFO database)
 client.fetch_derivatives_by_symbol('NFO', 'NIFTY25OCTFUT', ...)
-
-# Commodity lookup (checks MCX database)
-client.fetch_commodity_by_symbol('GOLDM25OCTFUT', ...)
-
-# Currency lookup (checks CDS database)
-client.fetch_currency_by_symbol('USDINR25OCTFUT', ...)
 ```
 
 **No code changes needed** - existing code automatically benefits from caching!
@@ -293,8 +284,8 @@ print(stats)
 #     'exists': True,
 #     'file_size': 13107200,      # bytes
 #     'file_size_mb': 12.5,        # MB
-#     'exchanges': ['NSE', 'BSE', 'NFO', 'BFO', 'MCX', 'CDS'],
-#     'total_instruments': 45123,
+#     'exchanges': ['NSE', 'BSE', 'NFO', 'BFO'],
+#     'total_instruments': 32500,
 #     'metadata': {
 #         'NSE': {
 #             'exchange': 'NSE',

@@ -138,7 +138,7 @@ class DataValidator:
 
         try:
             # Detect if this is derivatives data based on exchange
-            is_derivatives = exchange.upper() in ['NFO', 'BFO', 'CDS', 'MCX']
+            is_derivatives = exchange.upper() in ['NFO', 'BFO']
 
             # Convert to DataFrame for easier validation
             df = self._to_dataframe(data)
@@ -315,8 +315,8 @@ class DataValidator:
         warnings = []
 
         # Use different price limits for derivatives (options can go to ₹0)
-        min_price = OptionsValidationRules.MIN_OPTIONS_PRICE if is_derivatives else MIN_PRICE
-        max_price = OptionsValidationRules.MAX_OPTIONS_PRICE if is_derivatives else MAX_PRICE
+        min_price = OptionsValidationRules.MIN_PRICE_LIMIT if is_derivatives else MIN_PRICE
+        max_price = OptionsValidationRules.MAX_PRICE_LIMIT if is_derivatives else MAX_PRICE
 
         for col in ['open', 'high', 'low', 'close']:
             # Check minimum (from config)
@@ -629,13 +629,15 @@ class DataValidator:
             pct_change = df[col].pct_change().abs()
             spikes = df[pct_change > 0.21]  # 21% circuit limit
 
-            for idx in spikes.index[:10]:  # Limit to 10
+            for i, idx in enumerate(spikes.index[:10]):  # Limit to 10
+                # Use integer-based indexing to avoid tz issues
+                pct_val = pct_change.iloc[df.index.get_loc(idx)]
                 anomalies.append({
                     'type': 'price_spike',
                     'date': str(idx),
                     'field': col,
-                    'change_pct': round(pct_change.loc[idx] * 100, 2),
-                    'description': f"{col.upper()} changed {pct_change.loc[idx]*100:.1f}% on {idx.date() if hasattr(idx, 'date') else idx}",
+                    'change_pct': round(pct_val * 100, 2),
+                    'description': f"{col.upper()} changed {pct_val*100:.1f}% on {idx.date() if hasattr(idx, 'date') else idx}",
                     'severity': 'info',
                     'possible_causes': ['Stock split', 'Bonus issue', 'Major news', 'Corporate action']
                 })
@@ -647,12 +649,16 @@ class DataValidator:
             volume_spikes = df[volume_ratio > 8]  # 8x normal volume
 
             for idx in volume_spikes.index[:10]:
+                # Use integer-based indexing to avoid tz issues
+                idx_pos = df.index.get_loc(idx)
+                vol_val = int(df['volume'].iloc[idx_pos])
+                ratio_val = volume_ratio.iloc[idx_pos]
                 anomalies.append({
                     'type': 'volume_spike',
                     'date': str(idx),
-                    'volume': int(df.loc[idx, 'volume']),
-                    'ratio': round(volume_ratio.loc[idx], 1),
-                    'description': f"Volume {volume_ratio.loc[idx]:.1f}x normal on {idx.date() if hasattr(idx, 'date') else idx}",
+                    'volume': vol_val,
+                    'ratio': round(ratio_val, 1),
+                    'description': f"Volume {ratio_val:.1f}x normal on {idx.date() if hasattr(idx, 'date') else idx}",
                     'severity': 'info',
                     'possible_causes': ['Block deal', 'Buyback', 'Earnings', 'Index inclusion/exclusion']
                 })
@@ -710,12 +716,18 @@ class DataValidator:
         time_diff = index_for_diff.to_series().diff()
         large_gaps = time_diff > max_normal_gap
 
-        for idx in df.index[large_gaps]:
-            gap_size_days = (time_diff.loc[idx].total_seconds() / 86400)
-            gaps.append({
-                'start_date': str(idx),
-                'gap_size': int(gap_size_days)
-            })
+        # Use timezone-naive index for lookups to avoid tz comparison issues
+        naive_index = index_for_diff
+        for i, is_gap in enumerate(large_gaps):
+            if is_gap:
+                # Use the timezone-naive timestamp for lookup in time_diff
+                idx_naive = naive_index[i]
+                # time_diff has timezone-naive index, so use iloc instead of loc
+                gap_size_days = (time_diff.iloc[i].total_seconds() / 86400)
+                gaps.append({
+                    'start_date': str(df.index[i]),  # Use original tz-aware timestamp for display
+                    'gap_size': int(gap_size_days)
+                })
 
         return gaps[:10]  # Limit to 10 gaps
 

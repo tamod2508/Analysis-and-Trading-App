@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Login - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="flex" style="justify-content: center; align-items: center; min-height: calc(100vh - 200px);">
+    <div class="card" style="max-width: 500px; width: 100%;">
+        <div class="text-center mb-3">
+            <h1 style="border: none; margin-bottom: 0.5rem;">Kite Data Manager</h1>
+            <p class="secondary-text" style="font-size: 1.1rem;">
+                Historical Data Platform for Zerodha Kite Connect
+            </p>
+        </div>
+
+        <div class="card-title text-center">
+            Login to Kite Connect
+        </div>
+
+        <div class="info-box">
+            <p><strong>Step 1:</strong> Click the button below to open Kite login page</p>
+            <p><strong>Step 2:</strong> Login with your Zerodha credentials</p>
+            <p style="margin-bottom: 0;"><strong>Step 3:</strong> You'll be automatically logged in on redirect!</p>
+        </div>
+
+        <div class="text-center mt-3">
+            <a href="{{ login_url }}" class="btn btn-primary" style="padding: 0.75rem 2rem; font-size: 1rem;">
+                Open Kite Login Page
+            </a>
+        </div>
+
+        <div class="mt-3" style="padding: 1rem; background-color: rgba(230, 184, 101, 0.1); border: 1px solid rgba(230, 184, 101, 0.3); border-radius: 6px;">
+            <div style="color: var(--color-accent); font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem;">
+                ℹ️ Secure OAuth Authentication
+            </div>
+            <div style="color: var(--color-text-secondary); font-size: 0.875rem; line-height: 1.6;">
+                Your credentials are sent directly to Zerodha's servers. We never see or store your password.
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

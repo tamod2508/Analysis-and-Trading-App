@@ -714,13 +714,13 @@ class KiteClient:
         incremental: bool = True,
     ) -> Dict:
         """
-        Fetch derivatives (options/futures) data from NFO/BFO/CDS
+        Fetch derivatives (options/futures) data from NFO/BFO
 
         Unlike equity, derivatives contracts are unique to each exchange,
         so no fallback logic is needed.
 
         Args:
-            exchange: Exchange name (NFO, BFO, CDS)
+            exchange: Exchange name (NFO, BFO)
             symbol: Trading symbol (e.g., 'NIFTY25OCT24950CE', 'BANKNIFTY25NOV51500PE')
             instrument_token: Instrument token
             from_date: Start date
@@ -733,13 +733,13 @@ class KiteClient:
         Returns:
             Dict with operation summary
         """
-        if exchange.upper() not in ['NFO', 'BFO', 'CDS', 'MCX']:
+        if exchange.upper() not in ['NFO', 'BFO']:
             return {
                 'success': False,
                 'exchange': exchange,
                 'symbol': symbol,
                 'interval': interval,
-                'error': f'Invalid derivatives exchange: {exchange}. Must be NFO, BFO, CDS, or MCX'
+                'error': f'Invalid derivatives exchange: {exchange}. Must be NFO or BFO'
             }
 
         try:
@@ -896,7 +896,7 @@ class KiteClient:
         3. Calls fetch_and_save_derivatives()
 
         Args:
-            exchange: Exchange name (NFO, BFO, CDS)
+            exchange: Exchange name (NFO, BFO)
             symbol: Trading symbol (e.g., 'NIFTY25OCT24950CE', 'BANKNIFTY25NOV51500PE')
             from_date: Start date
             to_date: End date
@@ -908,13 +908,13 @@ class KiteClient:
         Returns:
             Dict with operation summary
         """
-        if exchange.upper() not in ['NFO', 'BFO', 'CDS', 'MCX']:
+        if exchange.upper() not in ['NFO', 'BFO']:
             return {
                 'success': False,
                 'exchange': exchange,
                 'symbol': symbol,
                 'interval': interval,
-                'error': f'Invalid derivatives exchange: {exchange}. Must be NFO, BFO, CDS, or MCX'
+                'error': f'Invalid derivatives exchange: {exchange}. Must be NFO or BFO'
             }
 
         logger.info(f"Looking up instrument token for {exchange}/{symbol}")
@@ -950,462 +950,6 @@ class KiteClient:
             return {
                 'success': False,
                 'exchange': exchange,
-                'symbol': symbol,
-                'interval': interval,
-                'error': f'Failed to lookup symbol: {str(e)}'
-            }
-
-    def fetch_and_save_commodity(
-        self,
-        symbol: str,
-        instrument_token: int,
-        from_date: datetime,
-        to_date: datetime,
-        interval: str,
-        validate: bool = True,
-        overwrite: bool = False,
-        incremental: bool = True,
-    ) -> Dict:
-        """
-        Fetch commodity data from MCX
-
-        Args:
-            symbol: Trading symbol (e.g., 'GOLDM25OCTFUT', 'CRUDEOIL25NOVFUT')
-            instrument_token: Instrument token
-            from_date: Start date
-            to_date: End date
-            interval: Timeframe
-            validate: Run validation before saving
-            overwrite: Overwrite existing data
-            incremental: Only fetch missing date ranges (default: True)
-
-        Returns:
-            Dict with operation summary
-        """
-        try:
-            start_time = time.time()
-            logger.info(f"Fetching MCX/{symbol} [{interval}]")
-
-            # Initialize HDF5Manager with COMMODITY segment
-            commodity_db = HDF5Manager(segment='COMMODITY')
-
-            # Incremental update: check for existing data and calculate missing ranges
-            if incremental and not overwrite:
-                missing_ranges = self.calculate_missing_ranges(
-                    'MCX', symbol, interval, from_date, to_date
-                )
-
-                if not missing_ranges:
-                    logger.info(f"All data already exists for MCX/{symbol} [{interval}]")
-                    return {
-                        'success': True,
-                        'exchange': 'MCX',
-                        'symbol': symbol,
-                        'interval': interval,
-                        'records': 0,
-                        'message': 'All data already exists (incremental mode)',
-                        'elapsed_seconds': round(time.time() - start_time, 2)
-                    }
-
-                # Fetch only missing ranges
-                logger.info(f"Incremental mode: fetching {len(missing_ranges)} missing date range(s)")
-                all_data = []
-
-                for range_start, range_end in missing_ranges:
-                    logger.info(f"Fetching gap: {range_start.date()} to {range_end.date()}")
-                    gap_data = self.fetch_historical_data_chunked(
-                        instrument_token,
-                        symbol,
-                        range_start,
-                        range_end,
-                        interval
-                    )
-
-                    if gap_data:
-                        all_data.extend(gap_data)
-                        logger.info(f"Fetched {len(gap_data)} records for gap")
-
-                data = all_data
-            else:
-                # Fetch full range
-                data = self.fetch_historical_data_chunked(
-                    instrument_token,
-                    symbol,
-                    from_date,
-                    to_date,
-                    interval
-                )
-
-            if not data:
-                return {
-                    'success': False,
-                    'exchange': 'MCX',
-                    'symbol': symbol,
-                    'interval': interval,
-                    'error': 'No data returned from API'
-                }
-
-            logger.info(f"Received {len(data)} records from API")
-
-            # Validate data if requested
-            validation_result = None
-            if validate:
-                logger.info(f"Validating data...")
-                validation_result = self.validator.validate(
-                    data,
-                    'MCX',
-                    symbol,
-                    interval,
-                    expected_start=from_date,
-                    expected_end=to_date
-                )
-
-                if not validation_result.is_valid:
-                    logger.error(f"Validation failed:\n{validation_result.summary()}")
-                    return {
-                        'success': False,
-                        'exchange': 'MCX',
-                        'symbol': symbol,
-                        'interval': interval,
-                        'error': 'Data validation failed',
-                        'validation': validation_result
-                    }
-
-                if validation_result.warnings:
-                    logger.warning(f"Validation warnings:\n{validation_result.summary()}")
-
-            # Save to database (use commodity DB)
-            logger.info(f"Saving to COMMODITY database...")
-            save_success = commodity_db.save_ohlcv(
-                'MCX',
-                symbol,
-                interval,
-                data,
-                overwrite=overwrite
-            )
-
-            if not save_success:
-                return {
-                    'success': False,
-                    'exchange': 'MCX',
-                    'symbol': symbol,
-                    'interval': interval,
-                    'error': 'Failed to save to database'
-                }
-
-            # Success
-            elapsed = time.time() - start_time
-            return {
-                'success': True,
-                'exchange': 'MCX',
-                'symbol': symbol,
-                'interval': interval,
-                'records': len(data),
-                'date_range': f"{data[0]['date'].date()} to {data[-1]['date'].date()}",
-                'elapsed_seconds': round(elapsed, 2),
-                'validation': validation_result if validate else None
-            }
-
-        except Exception as e:
-            logger.error(f"Error in fetch_and_save_commodity: {e}")
-            return {
-                'success': False,
-                'exchange': 'MCX',
-                'symbol': symbol,
-                'interval': interval,
-                'error': str(e)
-            }
-
-    def fetch_commodity_by_symbol(
-        self,
-        symbol: str,
-        from_date: datetime,
-        to_date: datetime,
-        interval: str,
-        validate: bool = True,
-        overwrite: bool = False,
-        incremental: bool = True,
-    ) -> Dict:
-        """
-        Fetch commodity data by symbol name (auto-lookup instrument token from MCX)
-
-        This is a convenience method that:
-        1. Looks up the symbol on MCX
-        2. Extracts instrument token
-        3. Calls fetch_and_save_commodity()
-
-        Args:
-            symbol: Trading symbol (e.g., 'GOLDM25OCTFUT', 'CRUDEOIL25NOVFUT')
-            from_date: Start date
-            to_date: End date
-            interval: Timeframe
-            validate: Run validation before saving
-            overwrite: Overwrite existing data
-            incremental: Only fetch missing date ranges (default: True)
-
-        Returns:
-            Dict with operation summary
-        """
-        logger.info(f"Looking up instrument token for MCX/{symbol}")
-
-        try:
-            # Fast lookup using database (auto-refreshes if stale)
-            token = self.lookup_instrument_token('MCX', symbol)
-
-            if not token:
-                return {
-                    'success': False,
-                    'exchange': 'MCX',
-                    'symbol': symbol,
-                    'interval': interval,
-                    'error': f'Symbol {symbol} not found on MCX'
-                }
-
-            # Fetch the data
-            return self.fetch_and_save_commodity(
-                symbol=symbol,
-                instrument_token=token,
-                from_date=from_date,
-                to_date=to_date,
-                interval=interval,
-                validate=validate,
-                overwrite=overwrite,
-                incremental=incremental
-            )
-
-        except Exception as e:
-            logger.error(f"Error looking up symbol {symbol} on MCX: {e}")
-            return {
-                'success': False,
-                'exchange': 'MCX',
-                'symbol': symbol,
-                'interval': interval,
-                'error': f'Failed to lookup symbol: {str(e)}'
-            }
-
-    def fetch_and_save_currency(
-        self,
-        symbol: str,
-        instrument_token: int,
-        from_date: datetime,
-        to_date: datetime,
-        interval: str,
-        validate: bool = True,
-        overwrite: bool = False,
-        incremental: bool = True,
-    ) -> Dict:
-        """
-        Fetch currency derivatives data from CDS (Currency Derivatives Segment)
-
-        Args:
-            symbol: Trading symbol (e.g., 'USDINR25OCTFUT', 'EURINR25NOVFUT')
-            instrument_token: Instrument token
-            from_date: Start date
-            to_date: End date
-            interval: Timeframe
-            validate: Run validation before saving
-            overwrite: Overwrite existing data
-            incremental: Only fetch missing date ranges (default: True)
-
-        Returns:
-            Dict with operation summary
-        """
-        try:
-            start_time = time.time()
-            logger.info(f"Fetching CDS/{symbol} [{interval}]")
-
-            # Initialize HDF5Manager with CURRENCY segment
-            currency_db = HDF5Manager(segment='CURRENCY')
-
-            # Incremental update: check for existing data and calculate missing ranges
-            if incremental and not overwrite:
-                missing_ranges = self.calculate_missing_ranges(
-                    'CDS', symbol, interval, from_date, to_date
-                )
-
-                if not missing_ranges:
-                    logger.info(f"All data already exists for CDS/{symbol} [{interval}]")
-                    return {
-                        'success': True,
-                        'exchange': 'CDS',
-                        'symbol': symbol,
-                        'interval': interval,
-                        'records': 0,
-                        'message': 'All data already exists (incremental mode)',
-                        'elapsed_seconds': round(time.time() - start_time, 2)
-                    }
-
-                # Fetch only missing ranges
-                logger.info(f"Incremental mode: fetching {len(missing_ranges)} missing date range(s)")
-                all_data = []
-
-                for range_start, range_end in missing_ranges:
-                    logger.info(f"Fetching gap: {range_start.date()} to {range_end.date()}")
-                    gap_data = self.fetch_historical_data_chunked(
-                        instrument_token,
-                        symbol,
-                        range_start,
-                        range_end,
-                        interval
-                    )
-
-                    if gap_data:
-                        all_data.extend(gap_data)
-                        logger.info(f"Fetched {len(gap_data)} records for gap")
-
-                data = all_data
-            else:
-                # Fetch full range
-                data = self.fetch_historical_data_chunked(
-                    instrument_token,
-                    symbol,
-                    from_date,
-                    to_date,
-                    interval
-                )
-
-            if not data:
-                return {
-                    'success': False,
-                    'exchange': 'CDS',
-                    'symbol': symbol,
-                    'interval': interval,
-                    'error': 'No data returned from API'
-                }
-
-            logger.info(f"Received {len(data)} records from API")
-
-            # Validate data if requested
-            validation_result = None
-            if validate:
-                logger.info(f"Validating data...")
-                validation_result = self.validator.validate(
-                    data,
-                    'CDS',
-                    symbol,
-                    interval,
-                    expected_start=from_date,
-                    expected_end=to_date
-                )
-
-                if not validation_result.is_valid:
-                    logger.error(f"Validation failed:\n{validation_result.summary()}")
-                    return {
-                        'success': False,
-                        'exchange': 'CDS',
-                        'symbol': symbol,
-                        'interval': interval,
-                        'error': 'Data validation failed',
-                        'validation': validation_result
-                    }
-
-                if validation_result.warnings:
-                    logger.warning(f"Validation warnings:\n{validation_result.summary()}")
-
-            # Save to database (use currency DB)
-            logger.info(f"Saving to CURRENCY database...")
-            save_success = currency_db.save_ohlcv(
-                'CDS',
-                symbol,
-                interval,
-                data,
-                overwrite=overwrite
-            )
-
-            if not save_success:
-                return {
-                    'success': False,
-                    'exchange': 'CDS',
-                    'symbol': symbol,
-                    'interval': interval,
-                    'error': 'Failed to save to database'
-                }
-
-            # Success
-            elapsed = time.time() - start_time
-            return {
-                'success': True,
-                'exchange': 'CDS',
-                'symbol': symbol,
-                'interval': interval,
-                'records': len(data),
-                'date_range': f"{data[0]['date'].date()} to {data[-1]['date'].date()}",
-                'elapsed_seconds': round(elapsed, 2),
-                'validation': validation_result if validate else None
-            }
-
-        except Exception as e:
-            logger.error(f"Error in fetch_and_save_currency: {e}")
-            return {
-                'success': False,
-                'exchange': 'CDS',
-                'symbol': symbol,
-                'interval': interval,
-                'error': str(e)
-            }
-
-    def fetch_currency_by_symbol(
-        self,
-        symbol: str,
-        from_date: datetime,
-        to_date: datetime,
-        interval: str,
-        validate: bool = True,
-        overwrite: bool = False,
-        incremental: bool = True,
-    ) -> Dict:
-        """
-        Fetch currency derivatives data by symbol name (auto-lookup instrument token from CDS)
-
-        This is a convenience method that:
-        1. Looks up the symbol on CDS
-        2. Extracts instrument token
-        3. Calls fetch_and_save_currency()
-
-        Args:
-            symbol: Trading symbol (e.g., 'USDINR25OCTFUT', 'EURINR25NOVFUT')
-            from_date: Start date
-            to_date: End date
-            interval: Timeframe
-            validate: Run validation before saving
-            overwrite: Overwrite existing data
-            incremental: Only fetch missing date ranges (default: True)
-
-        Returns:
-            Dict with operation summary
-        """
-        logger.info(f"Looking up instrument token for CDS/{symbol}")
-
-        try:
-            # Fast lookup using database (auto-refreshes if stale)
-            token = self.lookup_instrument_token('CDS', symbol)
-
-            if not token:
-                return {
-                    'success': False,
-                    'exchange': 'CDS',
-                    'symbol': symbol,
-                    'interval': interval,
-                    'error': f'Symbol {symbol} not found on CDS'
-                }
-
-            # Fetch the data
-            return self.fetch_and_save_currency(
-                symbol=symbol,
-                instrument_token=token,
-                from_date=from_date,
-                to_date=to_date,
-                interval=interval,
-                validate=validate,
-                overwrite=overwrite,
-                incremental=incremental
-            )
-
-        except Exception as e:
-            logger.error(f"Error looking up symbol {symbol} on CDS: {e}")
-            return {
-                'success': False,
-                'exchange': 'CDS',
                 'symbol': symbol,
                 'interval': interval,
                 'error': f'Failed to lookup symbol: {str(e)}'
@@ -1498,7 +1042,7 @@ class KiteClient:
         4. Saves fetched data to database for future use
 
         Args:
-            exchange: Filter by exchange (NSE, BSE, NFO, BFO, MCX, CDS)
+            exchange: Filter by exchange (NSE, BSE, NFO, BFO)
             use_cache: Use persistent database cache (default: True)
             force_refresh: Force API fetch even if cache exists (default: False)
 
@@ -1566,7 +1110,7 @@ class KiteClient:
         3. Falls back to API fetch if needed
 
         Args:
-            exchange: Exchange name (NSE, BSE, NFO, BFO, MCX, CDS)
+            exchange: Exchange name (NSE, BSE, NFO, BFO)
             symbol: Trading symbol
             use_cache: Use persistent database (default: True)
 

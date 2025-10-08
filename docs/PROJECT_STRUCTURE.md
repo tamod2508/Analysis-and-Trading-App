@@ -66,8 +66,6 @@ kite_app/
 │   ├── hdf5/                    # HDF5 database files
 │   │   ├── EQUITY.h5           # NSE + BSE stocks
 │   │   ├── DERIVATIVES.h5      # NFO + BFO options/futures
-│   │   ├── COMMODITY.h5        # MCX commodities
-│   │   └── CURRENCY.h5         # CDS currency derivatives
 │   └── backups/                 # Database backups
 │
 ├── exports/                      # Exported data
@@ -120,9 +118,7 @@ kite_app/
 
 #### `constants.py`
 **Enums:**
-- `Exchange` - NSE, BSE, NFO, BFO, MCX, CDS
 - `Interval` - minute, 3minute, 5minute, 10minute, 15minute, 30minute, 60minute, day
-- `Segment` - EQUITY, DERIVATIVES, COMMODITY, CURRENCY
 - `CompressionType` - BLOSC_LZ4, BLOSC_ZSTD, GZIP, LZF, NONE
 - `InstrumentType` - EQ, FUT, CE, PE
 
@@ -133,8 +129,6 @@ EXCHANGE_TO_SEGMENT = {
     Exchange.BSE: Segment.EQUITY,
     Exchange.NFO: Segment.DERIVATIVES,
     Exchange.BFO: Segment.DERIVATIVES,
-    Exchange.MCX: Segment.COMMODITY,
-    Exchange.CDS: Segment.CURRENCY,
 }
 ```
 
@@ -151,7 +145,6 @@ VALIDATION_LIMITS = {
         max_price=100_000.0,
         allow_zero_prices=True
     ),
-    # ... COMMODITY, CURRENCY
 }
 ```
 
@@ -224,8 +217,6 @@ class TestingConfig(BaseConfig):
 **Separate file per segment:**
 - `EQUITY.h5` - NSE + BSE stocks (6-field schema)
 - `DERIVATIVES.h5` - NFO + BFO options/futures (7-field schema with OI)
-- `COMMODITY.h5` - MCX commodities (7-field schema with OI)
-- `CURRENCY.h5` - CDS currency derivatives (7-field schema with OI)
 
 **Internal Structure:**
 ```

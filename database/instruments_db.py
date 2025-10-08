@@ -37,9 +37,7 @@ class InstrumentsDB:
     │   ├── instruments
     │   ├── metadata
     ├── /NFO/
-    ├── /BFO/
-    ├── /MCX/
-    └── /CDS/
+    └── /BFO/
     """
 
     def __init__(
@@ -75,7 +73,7 @@ class InstrumentsDB:
         Save instruments to database
 
         Args:
-            exchange: Exchange name (NSE, BSE, NFO, BFO, MCX, CDS)
+            exchange: Exchange name (NSE, BSE, NFO, BFO)
             instruments: List of instrument dicts from Kite API
             overwrite: Overwrite existing data (default: True)
 

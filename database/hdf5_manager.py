@@ -61,14 +61,14 @@ class HDF5Manager:
         Initialize HDF5 Manager for a specific segment
 
         Args:
-            segment: Market segment (EQUITY, DERIVATIVES, COMMODITY, CURRENCY)
+            segment: Market segment (EQUITY, DERIVATIVES)
         """
         self.segment = segment.upper()
         self.db_path = config.get_hdf5_path(self.segment)
         self.structure = HDF5Structure()
 
         # Determine schema type based on segment
-        self.is_derivatives = self.segment in ['DERIVATIVES', 'COMMODITY', 'CURRENCY']
+        self.is_derivatives = self.segment in ['DERIVATIVES']
 
         # Ensure HDF5 directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,8 +313,6 @@ class HDF5Manager:
         segment_exchange_map = {
             'EQUITY': [Exchange.NSE.value, Exchange.BSE.value],
             'DERIVATIVES': [Exchange.NFO.value, Exchange.BFO.value],
-            'COMMODITY': [Exchange.MCX.value],
-            'CURRENCY': [Exchange.CDS.value],
         }
         return segment_exchange_map.get(self.segment, [Exchange.NSE.value])
 
@@ -1172,8 +1170,8 @@ class MultiSegmentManager:
     def get_all_stats(self) -> Dict[str, Dict]:
         """Get statistics for all segments"""
         stats = {}
-        
-        for segment in ['EQUITY', 'DERIVATIVES', 'COMMODITY', 'CURRENCY']:
+
+        for segment in ['EQUITY', 'DERIVATIVES']:
             db_path = config.get_hdf5_path(segment)
             if db_path.exists():
                 mgr = self.get_manager(segment)

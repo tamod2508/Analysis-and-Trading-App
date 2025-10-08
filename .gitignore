@@ -66,6 +66,9 @@ logs/*.log
 .ipynb_checkpoints/
 *.ipynb
 
+# Work in progress directories
+financial_data_fetcher/
+
 # Virtual environment
 venv/
 ENV/
