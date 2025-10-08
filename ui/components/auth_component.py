@@ -7,7 +7,7 @@ import streamlit as st
 from typing import Optional, Dict
 import logging
 
-from api.auth_handler import AuthHandler, verify_authentication, get_user_profile
+from api.auth_handler import AuthHandler, verify_authentication, get_user_profile, get_token_expiry_info
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,25 @@ def handle_login():
 
 def show_user_profile(profile: Dict):
     """Display user profile card"""
+    # Get token expiry info
+    expiry_info = get_token_expiry_info()
+
+    expiry_html = ""
+    if expiry_info:
+        expiry_string = expiry_info['expiry_string']
+        is_expired = expiry_info['is_expired']
+
+        if is_expired:
+            expiry_color = '#EF4444'  # Red
+        else:
+            time_remaining = expiry_info['time_remaining']
+            if time_remaining and time_remaining.total_seconds() < 3600:
+                expiry_color = '#F59E0B'  # Orange/yellow for < 1 hour
+            else:
+                expiry_color = '#10B981'  # Green
+
+        expiry_html = f"<div class='profile-detail' style='color: {expiry_color};'><strong>Token Status:</strong> {expiry_string}</div>"
+
     st.markdown(f"""
     <div class='profile-card fade-in'>
         <h3>Authenticated</h3>
@@ -166,6 +185,7 @@ def show_user_profile(profile: Dict):
         <div class='profile-detail'><strong>Email:</strong> {profile.get('email', 'N/A')}</div>
         <div class='profile-detail'><strong>User ID:</strong> {profile.get('user_id', 'N/A')}</div>
         <div class='profile-detail'><strong>Broker:</strong> {profile.get('broker', 'Zerodha')}</div>
+        {expiry_html}
     </div>
     """, unsafe_allow_html=True)
 
@@ -221,10 +241,20 @@ def show_auth_status_badge():
 
     if st.session_state.authenticated and st.session_state.user_profile:
         profile = st.session_state.user_profile
+
+        # Get token expiry info
+        expiry_info = get_token_expiry_info()
+        expiry_text = ""
+
+        if expiry_info:
+            expiry_string = expiry_info['expiry_string']
+            expiry_text = f"<div style='font-size: 0.75rem; color: #94A3B8; margin-top: 0.3rem;'>{expiry_string}</div>"
+
         st.markdown(f"""
         <div class='auth-badge authenticated'>
             <span class='status-indicator status-online'></span>
             {profile.get('user_name', 'User')}
+            {expiry_text}
         </div>
         """, unsafe_allow_html=True)
         return True

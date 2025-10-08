@@ -3,6 +3,7 @@ Constants and enumerations
 """
 
 from enum import Enum
+from dataclasses import dataclass
 import pytz
 import pandas as pd
 
@@ -31,11 +32,81 @@ class InstrumentType(str, Enum):  # ← ADD THIS (it's exported but not defined!
     PE = "PE"   # Put Option
 
 class Segment(str, Enum):
-    # Equity
-    EQUITY = "EQUITY"
-    # Future: DERIVATIVES, COMMODITY, CURRENCY
+    EQUITY = "EQUITY"              # Equity stocks (NSE, BSE)
+    DERIVATIVES = "DERIVATIVES"    # F&O (NFO, BFO, CDS)
+    COMMODITY = "COMMODITY"        # Commodities (MCX)
+    CURRENCY = "CURRENCY"          # Currency derivatives (CDS)
 
-    # Per-request limits for each interval (from Kite API)
+class CompressionType(str, Enum):
+    """HDF5 compression algorithms"""
+    BLOSC_LZ4 = "blosc:lz4"        # Fast compression (recommended)
+    BLOSC_ZSTD = "blosc:zstd"      # Better compression ratio
+    BLOSC_LZ4HC = "blosc:lz4hc"    # High compression LZ4
+    GZIP = "gzip"                  # Standard gzip (slower but compatible)
+    LZF = "lzf"                    # Fast, low compression
+    NONE = "none"                  # No compression
+
+# Exchange to Segment mapping (single source of truth)
+EXCHANGE_TO_SEGMENT = {
+    Exchange.NSE: Segment.EQUITY,
+    Exchange.BSE: Segment.EQUITY,
+    Exchange.NFO: Segment.DERIVATIVES,
+    Exchange.BFO: Segment.DERIVATIVES,
+    Exchange.MCX: Segment.COMMODITY,
+    Exchange.CDS: Segment.CURRENCY,
+}
+
+# Reverse mapping: Segment to Exchanges
+SEGMENT_TO_EXCHANGES = {
+    Segment.EQUITY: [Exchange.NSE, Exchange.BSE],
+    Segment.DERIVATIVES: [Exchange.NFO, Exchange.BFO],
+    Segment.COMMODITY: [Exchange.MCX],
+    Segment.CURRENCY: [Exchange.CDS],
+}
+
+# Validation limits dataclass
+@dataclass
+class ValidationLimits:
+    """Validation limits for price and volume data"""
+    min_price: float
+    max_price: float
+    min_volume: int
+    max_volume: int
+    allow_zero_prices: bool = False  # For derivatives options that can expire worthless
+
+# Segment-specific validation limits
+VALIDATION_LIMITS = {
+    Segment.EQUITY: ValidationLimits(
+        min_price=0.01,              # Equity must have positive price
+        max_price=1_000_000.0,       # ₹10 lakh max (sanity check)
+        min_volume=0,
+        max_volume=10_000_000_000,   # 10 billion shares max
+        allow_zero_prices=False
+    ),
+    Segment.DERIVATIVES: ValidationLimits(
+        min_price=0.00,              # Options can expire worthless (₹0)
+        max_price=100_000.0,         # ₹1 lakh max for derivatives
+        min_volume=0,
+        max_volume=10_000_000_000,
+        allow_zero_prices=True       # Allow ₹0 for expired options
+    ),
+    Segment.COMMODITY: ValidationLimits(
+        min_price=0.00,              # Commodities can theoretically hit zero
+        max_price=100_000.0,
+        min_volume=0,
+        max_volume=10_000_000_000,
+        allow_zero_prices=True
+    ),
+    Segment.CURRENCY: ValidationLimits(
+        min_price=0.00,              # Currency options can expire worthless
+        max_price=100_000.0,
+        min_volume=0,
+        max_volume=10_000_000_000,
+        allow_zero_prices=True
+    ),
+}
+
+# Per-request limits for each interval (from Kite API)
 INTERVAL_FETCH_LIMITS = {
     Interval.MINUTE: 60,
     Interval.MINUTE_3: 100,
@@ -49,7 +120,9 @@ INTERVAL_FETCH_LIMITS = {
 
 PRIMARY_INTERVALS = {
     Segment.EQUITY: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5],
-    # Future: Segment.DERIVATIVES: [...], etc.
+    Segment.DERIVATIVES: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5, Interval.MINUTE],
+    Segment.COMMODITY: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5, Interval.MINUTE],
+    Segment.CURRENCY: [Interval.DAY, Interval.MINUTE_60, Interval.MINUTE_15, Interval.MINUTE_5, Interval.MINUTE],
 }
 
 DERIVED_INTERVALS = {
@@ -102,13 +175,20 @@ CHART_TYPES = [
     "OHLC"
 ]
 
-CHUNK_SIZES = {
-    Interval.DAY: 5000,        # Large chunks for daily
-    Interval.MINUTE_60: 2000,  # Medium for hourly
-    Interval.MINUTE_15: 1000,  # Smaller for 15-min
-    Interval.MINUTE_5: 1000,   # Smaller for 5-min
-    Interval.MINUTE: 500,      # Smallest for minute
+# HDF5 Internal Storage Chunks
+# These control how HDF5 stores data internally for optimal compression and I/O.
+# Smaller values = better for random access queries
+# Larger values = better for sequential reads
+HDF5_STORAGE_CHUNKS = {
+    Interval.DAY: 5000,        # Daily: large chunks (sequential reads common)
+    Interval.MINUTE_60: 2000,  # Hourly: medium chunks
+    Interval.MINUTE_15: 1000,  # 15-min: smaller chunks (more queries)
+    Interval.MINUTE_5: 1000,   # 5-min: smaller chunks
+    Interval.MINUTE: 500,      # Minute: smallest chunks (frequent queries)
 }
+
+# DEPRECATED: Use HDF5_STORAGE_CHUNKS instead
+CHUNK_SIZES = HDF5_STORAGE_CHUNKS  # Backward compatibility alias
 
 # Time ranges for quick selection
 TIME_RANGES = {
@@ -123,17 +203,23 @@ TIME_RANGES = {
     "All Time": None,
 }
 
-# Price validation limits
-MIN_PRICE = 0.01          # Minimum valid price (₹0.01)
-MAX_PRICE = 1_000_000.0   # Maximum valid price (₹10 lakh - sanity check)
-
-# Volume validation limits
+# DEPRECATED: Use VALIDATION_LIMITS[segment] instead for segment-specific validation
+# Kept for backward compatibility only
+MIN_PRICE = 0.01          # Minimum valid price (₹0.01) - EQUITY only
+MAX_PRICE = 1_000_000.0   # Maximum valid price (₹10 lakh - sanity check) - EQUITY only
 MIN_VOLUME = 0                 # Minimum volume (can be zero)
 MAX_VOLUME = 10_000_000_000    # Maximum volume (10 billion shares)
 
 # Date validation limits
 MIN_DATE = int(pd.Timestamp('2000-01-01').timestamp())  # Earliest valid date
 MAX_DATE = int(pd.Timestamp('2099-12-31').timestamp())  # Latest valid date
+
+# File size limits (for warnings and safety checks)
+MAX_HDF5_FILE_SIZE_GB: float = 50.0        # Warn if single HDF5 file exceeds 50GB
+MAX_BACKUP_SIZE_GB: float = 100.0          # Warn if total backup size exceeds 100GB
+MAX_EXPORT_SIZE_MB: float = 500.0          # Warn if single export file exceeds 500MB
+MAX_LOG_FILE_SIZE_MB: float = 100.0        # Maximum size per log file (before rotation)
+MAX_TOTAL_DATA_SIZE_GB: float = 200.0      # Warn if total data directory exceeds 200GB
 
 # Export formats
 EXPORT_FORMATS = [

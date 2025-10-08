@@ -24,7 +24,9 @@ from config import (
 )
 from database.schema import (
     EquityOHLCVSchema,
+    OptionsOHLCVSchema,
     ValidationRules,
+    OptionsValidationRules,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,7 +121,7 @@ class DataValidator:
 
         Args:
             data: OHLCV data (list of dicts, numpy array, or DataFrame)
-            exchange: Exchange name (NSE, BSE)
+            exchange: Exchange name (NSE, BSE, NFO, BFO)
             symbol: Trading symbol
             interval: Timeframe (5minute, 15minute, 60minute, day)
             expected_start: Expected start date (optional)
@@ -135,6 +137,9 @@ class DataValidator:
         stats = {}
 
         try:
+            # Detect if this is derivatives data based on exchange
+            is_derivatives = exchange.upper() in ['NFO', 'BFO', 'CDS', 'MCX']
+
             # Convert to DataFrame for easier validation
             df = self._to_dataframe(data)
 
@@ -148,8 +153,10 @@ class DataValidator:
 
             # Log validation start
             if config.LOG_PERFORMANCE:
+                schema_type = "OPTIONS" if is_derivatives else "EQUITY"
                 logger.debug(
-                    f"Validating {len(df)} rows for {exchange}/{symbol} [{interval}]"
+                    f"Validating {len(df)} rows for {exchange}/{symbol} [{interval}] "
+                    f"using {schema_type} schema"
                 )
 
             # Basic stats
@@ -158,9 +165,10 @@ class DataValidator:
             stats['exchange'] = exchange
             stats['symbol'] = symbol
             stats['interval'] = interval
+            stats['schema_type'] = 'OPTIONS' if is_derivatives else 'EQUITY'
 
             # 1. Structure validation
-            struct_errors = self._validate_structure(df)
+            struct_errors = self._validate_structure(df, is_derivatives)
             errors.extend(struct_errors)
 
             # 2. OHLC relationship validation
@@ -169,7 +177,7 @@ class DataValidator:
             stats.update(ohlc_stats)
 
             # 3. Price range validation
-            price_errors, price_warnings = self._validate_price_ranges(df)
+            price_errors, price_warnings = self._validate_price_ranges(df, is_derivatives)
             errors.extend(price_errors)
             warnings.extend(price_warnings)
 
@@ -178,7 +186,23 @@ class DataValidator:
             errors.extend(vol_errors)
             warnings.extend(vol_warnings)
 
-            # 5. Date validation
+            # 5. Open Interest validation (derivatives only)
+            if is_derivatives:
+                # Check if OI field exists
+                if 'oi' in df.columns:
+                    oi_errors, oi_warnings = self._validate_open_interest(df)
+                    errors.extend(oi_errors)
+                    warnings.extend(oi_warnings)
+                    stats['has_oi'] = True
+                else:
+                    # OI is common for derivatives but not strictly required
+                    warnings.append(
+                        f"Missing 'oi' (Open Interest) column for derivatives data. "
+                        f"This is common for options/futures but may indicate incomplete data."
+                    )
+                    stats['has_oi'] = False
+
+            # 6. Date validation
             date_errors, date_warnings, date_stats = self._validate_dates(
                 df, interval, expected_start, expected_end
             )
@@ -186,13 +210,13 @@ class DataValidator:
             warnings.extend(date_warnings)
             stats.update(date_stats)
 
-            # 6. Duplicate check
+            # 7. Duplicate check
             dup_errors, dup_stats = self._check_duplicates(df)
             errors.extend(dup_errors)
             stats.update(dup_stats)
 
-            # 7. Missing values check
-            missing_errors = self._check_missing_values(df)
+            # 8. Missing values check
+            missing_errors = self._check_missing_values(df, is_derivatives)
             errors.extend(missing_errors)
 
             # 8. Data availability check
@@ -223,12 +247,17 @@ class DataValidator:
             errors.append(f"Validation exception: {str(e)}")
             return ValidationResult(False, errors, warnings, anomalies, stats)
 
-    def _validate_structure(self, df: pd.DataFrame) -> List[str]:
+    def _validate_structure(self, df: pd.DataFrame, is_derivatives: bool = False) -> List[str]:
         """Validate DataFrame structure"""
         errors = []
 
         # Required columns (timestamp is in the index, not a column)
         required = ['open', 'high', 'low', 'close', 'volume']
+
+        # Note: 'oi' (Open Interest) is common for derivatives but not strictly required
+        # Some derivatives (or data sources) may not include OI
+        # We'll check for it separately and issue a warning if missing
+
         missing = [col for col in required if col not in df.columns]
 
         if missing:
@@ -279,33 +308,38 @@ class DataValidator:
         return errors, stats
 
     def _validate_price_ranges(
-        self, df: pd.DataFrame
+        self, df: pd.DataFrame, is_derivatives: bool = False
     ) -> Tuple[List[str], List[str]]:
         """Validate price ranges using constants from config"""
         errors = []
         warnings = []
 
+        # Use different price limits for derivatives (options can go to ₹0)
+        min_price = OptionsValidationRules.MIN_OPTIONS_PRICE if is_derivatives else MIN_PRICE
+        max_price = OptionsValidationRules.MAX_OPTIONS_PRICE if is_derivatives else MAX_PRICE
+
         for col in ['open', 'high', 'low', 'close']:
             # Check minimum (from config)
-            too_low = df[col] < MIN_PRICE
+            too_low = df[col] < min_price
             if too_low.any():
                 errors.append(
                     f"{col.upper()} has {too_low.sum()} values below "
-                    f"minimum ({MIN_PRICE})"
+                    f"minimum ({min_price})"
                 )
 
             # Check maximum (from config)
-            too_high = df[col] > MAX_PRICE
+            too_high = df[col] > max_price
             if too_high.any():
                 errors.append(
                     f"{col.upper()} has {too_high.sum()} values above "
-                    f"maximum ({MAX_PRICE})"
+                    f"maximum ({max_price})"
                 )
 
-            # Check for zero prices (critical error)
-            zero_prices = df[col] == 0
-            if zero_prices.any():
-                errors.append(f"{col.upper()} has {zero_prices.sum()} zero values")
+            # Check for zero prices (critical error for equity, allowed for derivatives)
+            if not is_derivatives:
+                zero_prices = df[col] == 0
+                if zero_prices.any():
+                    errors.append(f"{col.upper()} has {zero_prices.sum()} zero values")
 
         # Check for suspicious price spikes (21% circuit limit in India)
         for col in ['open', 'high', 'low', 'close']:
@@ -347,6 +381,43 @@ class DataValidator:
             warnings.append(
                 f"Zero volume in {zero_vol.sum()} rows "
                 f"({zero_vol.sum()/len(df)*100:.1f}%)"
+            )
+
+        return errors, warnings
+
+    def _validate_open_interest(
+        self, df: pd.DataFrame
+    ) -> Tuple[List[str], List[str]]:
+        """
+        Validate Open Interest data for derivatives
+
+        Note: This should only be called if 'oi' column exists
+        """
+        errors = []
+        warnings = []
+
+        if 'oi' not in df.columns:
+            # Defensive check - this shouldn't happen if caller checks first
+            return errors, warnings
+
+        # Check negative OI
+        negative = df['oi'] < OptionsValidationRules.MIN_OI
+        if negative.any():
+            errors.append(f"Negative Open Interest in {negative.sum()} rows")
+
+        # Check excessive OI (from OptionsValidationRules)
+        excessive = df['oi'] > OptionsValidationRules.MAX_OI
+        if excessive.any():
+            errors.append(
+                f"Excessive Open Interest (>{OptionsValidationRules.MAX_OI}) in {excessive.sum()} rows"
+            )
+
+        # Check for zero OI (warning, not error - contract might not have any positions)
+        zero_oi = df['oi'] == 0
+        if zero_oi.any():
+            warnings.append(
+                f"Zero Open Interest in {zero_oi.sum()} rows "
+                f"({zero_oi.sum()/len(df)*100:.1f}%)"
             )
 
         return errors, warnings
@@ -484,11 +555,16 @@ class DataValidator:
 
         return errors, stats
 
-    def _check_missing_values(self, df: pd.DataFrame) -> List[str]:
+    def _check_missing_values(self, df: pd.DataFrame, is_derivatives: bool = False) -> List[str]:
         """Check for missing/NaN values"""
         errors = []
 
         required_columns = ['open', 'high', 'low', 'close', 'volume']
+
+        # For derivatives, also check 'oi' (Open Interest) if present
+        # OI is common but not strictly required for all derivatives
+        if is_derivatives and 'oi' in df.columns:
+            required_columns.append('oi')
 
         for col in required_columns:
             if col not in df.columns:
@@ -697,6 +773,7 @@ class DataValidator:
     def quick_validate(data: pd.DataFrame) -> bool:
         """
         Quick validation check (for performance-critical paths)
+        Works for both equity and derivatives data
 
         Returns:
             True if basic checks pass
@@ -709,9 +786,14 @@ class DataValidator:
         if not all(col in data.columns for col in required):
             return False
 
-        # Check for NaN values
+        # Check for NaN values in required columns
         if data[required].isna().any().any():
             return False
+
+        # If 'oi' exists (derivatives), check for NaN
+        if 'oi' in data.columns:
+            if data['oi'].isna().any():
+                return False
 
         # Basic OHLC check
         valid_ohlc = (
@@ -728,11 +810,15 @@ class DataValidator:
     def sanitize_data(df: pd.DataFrame) -> pd.DataFrame:
         """
         Attempt to clean/fix common data issues
+        Works for both equity and derivatives data
 
         Returns:
             Sanitized DataFrame
         """
         df = df.copy()
+
+        # Detect if this is derivatives data (has 'oi' column)
+        is_derivatives = 'oi' in df.columns
 
         # Remove duplicates (keep first)
         df = df[~df.index.duplicated(keep='first')]
@@ -744,13 +830,18 @@ class DataValidator:
         if 'volume' in df.columns:
             df['volume'] = df['volume'].fillna(0)
 
+        # Fill missing OI with 0 (for derivatives)
+        if is_derivatives and 'oi' in df.columns:
+            df['oi'] = df['oi'].fillna(0)
+
         # Remove rows with NaN prices
         price_cols = ['open', 'high', 'low', 'close']
         df = df.dropna(subset=price_cols)
 
-        # Remove rows with zero prices
-        for col in price_cols:
-            df = df[df[col] > 0]
+        # Remove rows with zero prices (only for equity, derivatives can have ₹0)
+        if not is_derivatives:
+            for col in price_cols:
+                df = df[df[col] > 0]
 
         return df
 
@@ -765,14 +856,14 @@ def validate_kite_response(
 
     Args:
         data: Raw data from Kite API
-        exchange: Exchange name
+        exchange: Exchange name (NSE, BSE, NFO, BFO)
         symbol: Trading symbol
         interval: Data interval
 
     Returns:
         ValidationResult with detailed feedback
     """
-    validator = DataValidator(strict_mode=False)
+    validator = DataValidator()
     return validator.validate(data, exchange, symbol, interval)
 
 

@@ -13,13 +13,13 @@ from contextlib import contextmanager
 import shutil
 import gc
 import logging
+import hashlib
 
 from config import (
     config,
     Interval,
     Segment,
     Exchange,
-    CHUNK_SIZES,
     MIN_PRICE,
     MAX_PRICE,
     MIN_VOLUME,
@@ -30,16 +30,25 @@ from config import (
 )
 from database.schema import (
     EquityOHLCVSchema,
+    OptionsOHLCVSchema,
     InstrumentSchema,
     HDF5Structure,
     DatasetAttributes,
     ValidationRules,
+    OptionsValidationRules,
     create_empty_ohlcv_array,
+    create_empty_options_array,
     dict_to_ohlcv_array,
+    dict_to_options_array,
     ohlcv_array_to_dict,
+    options_array_to_dict,
 )
 
 logger = logging.getLogger(__name__)
+
+# Database version management
+CURRENT_DB_VERSION = '1.0'
+COMPATIBLE_DB_VERSIONS = ['1.0']  # List of versions that can be read without migration
 
 
 class HDF5Manager:
@@ -50,22 +59,37 @@ class HDF5Manager:
     def __init__(self, segment: str = 'EQUITY'):
         """
         Initialize HDF5 Manager for a specific segment
-        
+
         Args:
             segment: Market segment (EQUITY, DERIVATIVES, COMMODITY, CURRENCY)
         """
         self.segment = segment.upper()
         self.db_path = config.get_hdf5_path(self.segment)
         self.structure = HDF5Structure()
-        
+
+        # Determine schema type based on segment
+        self.is_derivatives = self.segment in ['DERIVATIVES', 'COMMODITY', 'CURRENCY']
+
         # Ensure HDF5 directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize database if needed
         if not self.db_path.exists():
             self._initialize_database()
-        
+        else:
+            # Check file integrity if database exists
+            if not self._check_file_integrity():
+                logger.error(f"Corrupt HDF5 file detected: {self.db_path}")
+                backup_path = self.db_path.with_suffix('.h5.corrupt')
+                logger.warning(f"Moving corrupt file to: {backup_path}")
+                shutil.move(str(self.db_path), str(backup_path))
+                self._initialize_database()
+            else:
+                # Check version and migrate if needed
+                self._check_and_migrate_version()
+
         logger.info(f"HDF5Manager initialized: {self.db_path} (Segment: {self.segment})")
+        logger.info(f"Schema: {'OPTIONS (with OI)' if self.is_derivatives else 'EQUITY (no OI)'}")
         logger.info(f"Compression: {config.HDF5_COMPRESSION} (level {config.HDF5_COMPRESSION_LEVEL})")
     
     @contextmanager
@@ -125,7 +149,7 @@ class HDF5Manager:
             'chunks': settings['chunks']
         }
     
-    def _initialize_database(self):
+    def _initialize_database(self) -> None:
         """Create new HDF5 database with proper structure"""
         logger.info(f"Creating new database: {self.db_path}")
         
@@ -151,7 +175,139 @@ class HDF5Manager:
             f.attrs['hdf5_cache_size'] = config.HDF5_RDCC_NBYTES
         
         logger.info(f"✅ Database initialized: {self.segment}")
-    
+
+    def _check_file_integrity(self) -> bool:
+        """
+        Check if HDF5 file is readable and not corrupt
+
+        Returns:
+            True if file is valid, False if corrupt
+        """
+        try:
+            with h5py.File(self.db_path, 'r') as f:
+                # Try to access root groups
+                try:
+                    root_keys = list(f.keys())
+                except (OSError, RuntimeError) as e:
+                    logger.error(f"Cannot read HDF5 file structure: {e}")
+                    return False
+
+                # Check required attributes
+                if 'db_version' not in f.attrs:
+                    logger.warning(f"Database missing version attribute: {self.db_path}")
+                    return False
+
+                if 'segment' not in f.attrs:
+                    logger.warning(f"Database missing segment attribute: {self.db_path}")
+                    return False
+
+                # Verify segment matches
+                stored_segment = f.attrs.get('segment', '')
+                if stored_segment != self.segment:
+                    logger.warning(
+                        f"Segment mismatch: expected {self.segment}, found {stored_segment}"
+                    )
+                    return False
+
+                # File is valid
+                return True
+
+        except (OSError, RuntimeError, KeyError, ValueError) as e:
+            logger.error(f"HDF5 file integrity check failed: {self.db_path} - {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error checking HDF5 file integrity: {e}")
+            return False
+
+    def _check_and_migrate_version(self) -> None:
+        """
+        Check database version and migrate if needed
+
+        Raises:
+            ValueError: If database version is incompatible and migration fails
+        """
+        try:
+            with h5py.File(self.db_path, 'r') as f:
+                db_version = f.attrs.get('db_version', '0.0')
+        except Exception as e:
+            logger.error(f"Cannot read database version: {e}")
+            db_version = '0.0'
+
+        # Check if version is compatible
+        if db_version == CURRENT_DB_VERSION:
+            logger.debug(f"Database version {db_version} is current")
+            return
+
+        if db_version in COMPATIBLE_DB_VERSIONS:
+            logger.info(f"Database version {db_version} is compatible (current: {CURRENT_DB_VERSION})")
+            return
+
+        # Version mismatch - need migration
+        logger.warning(
+            f"Database version mismatch: {db_version} (current: {CURRENT_DB_VERSION})"
+        )
+
+        try:
+            self._migrate_database(db_version, CURRENT_DB_VERSION)
+        except Exception as e:
+            logger.error(f"Database migration failed: {e}")
+            raise ValueError(
+                f"Database version {db_version} is incompatible and migration failed. "
+                f"Please backup and recreate the database."
+            )
+
+    def _migrate_database(self, from_version: str, to_version: str) -> None:
+        """
+        Migrate database schema from one version to another
+
+        Args:
+            from_version: Source version
+            to_version: Target version
+
+        Raises:
+            NotImplementedError: If migration path doesn't exist
+        """
+        logger.info(f"Migrating database: {from_version} → {to_version}")
+
+        # Create backup before migration
+        backup_path = self.db_path.with_suffix(f'.h5.v{from_version}.backup')
+        logger.info(f"Creating backup: {backup_path}")
+        shutil.copy2(str(self.db_path), str(backup_path))
+
+        # Define migration paths
+        # Add migration logic here as versions evolve
+        if from_version == '0.0' and to_version == '1.0':
+            self._migrate_0_0_to_1_0()
+        else:
+            raise NotImplementedError(
+                f"No migration path from {from_version} to {to_version}. "
+                f"Supported migrations: 0.0→1.0"
+            )
+
+        # Update version after successful migration
+        with h5py.File(self.db_path, 'a') as f:
+            f.attrs['db_version'] = to_version
+            f.attrs['migrated_at'] = datetime.now().isoformat()
+            f.attrs['migrated_from'] = from_version
+
+        logger.info(f"✅ Database migrated successfully: {from_version} → {to_version}")
+
+    def _migrate_0_0_to_1_0(self) -> None:
+        """Migrate from version 0.0 (no version) to 1.0"""
+        logger.info("Applying migration: 0.0 → 1.0")
+
+        with h5py.File(self.db_path, 'a') as f:
+            # Add any schema changes here
+            # For now, just add version metadata if missing
+            if 'db_version' not in f.attrs:
+                f.attrs['db_version'] = '1.0'
+            if 'segment' not in f.attrs:
+                f.attrs['segment'] = self.segment
+            if 'created_at' not in f.attrs:
+                f.attrs['created_at'] = datetime.now().isoformat()
+
+        logger.info("Migration 0.0 → 1.0 complete")
+
     def _get_segment_exchanges(self) -> List[str]:
         """Get list of exchanges for current segment"""
         segment_exchange_map = {
@@ -161,8 +317,24 @@ class HDF5Manager:
             'CURRENCY': [Exchange.CDS.value],
         }
         return segment_exchange_map.get(self.segment, [Exchange.NSE.value])
+
+    def _get_dtype(self) -> np.dtype:
+        """Get correct dtype based on segment"""
+        return OptionsOHLCVSchema.DTYPE if self.is_derivatives else EquityOHLCVSchema.DTYPE
+
+    def _get_converter(self):
+        """Get correct dict-to-array converter based on segment"""
+        return dict_to_options_array if self.is_derivatives else dict_to_ohlcv_array
+
+    def _get_validator(self):
+        """Get correct validation rules based on segment"""
+        return OptionsValidationRules if self.is_derivatives else ValidationRules
+
+    def _get_array_to_dict_converter(self):
+        """Get correct array-to-dict converter based on segment"""
+        return options_array_to_dict if self.is_derivatives else ohlcv_array_to_dict
     
-    def set_metadata(self, key: str, value: str):
+    def set_metadata(self, key: str, value: str) -> None:
         """Set database metadata"""
         with self.open_file('a') as f:
             f.attrs[key] = value
@@ -188,7 +360,7 @@ class HDF5Manager:
     ) -> bool:
         """
         Save OHLCV data to database for a specific timeframe
-        
+
         Args:
             exchange: Exchange name (NSE, BSE, NFO, etc.)
             symbol: Trading symbol
@@ -196,33 +368,70 @@ class HDF5Manager:
             data: OHLCV data (list of dicts, numpy array, or DataFrame)
             overwrite: If True, replace existing data
             validate: If True, validate data before saving
-        
+
         Returns:
             True if successful
         """
+        # Input validation
+        if not exchange or not isinstance(exchange, str):
+            raise ValueError(f"Invalid exchange: {exchange}. Must be a non-empty string.")
+
+        exchange_upper = exchange.upper()
+        valid_exchanges = [e.value for e in Exchange]
+        if exchange_upper not in valid_exchanges:
+            raise ValueError(
+                f"Unknown exchange: {exchange}. Must be one of: {', '.join(valid_exchanges)}"
+            )
+
+        if not symbol or not isinstance(symbol, str):
+            raise ValueError(f"Invalid symbol: {symbol}. Must be a non-empty string.")
+
+        # Validate interval
+        if isinstance(interval, Interval):
+            interval_str = interval.value
+        elif isinstance(interval, str):
+            valid_intervals = [i.value for i in Interval]
+            if interval not in valid_intervals:
+                raise ValueError(
+                    f"Invalid interval: {interval}. Must be one of: {', '.join(valid_intervals)}"
+                )
+            interval_str = interval
+        else:
+            raise ValueError(f"Invalid interval type: {type(interval)}. Must be str or Interval enum.")
+
+        # Validate data
+        if data is None:
+            raise ValueError("Data cannot be None")
+
+        if isinstance(data, (list, np.ndarray)) and len(data) == 0:
+            raise ValueError("Data cannot be empty")
+
+        if isinstance(data, pd.DataFrame) and data.empty:
+            raise ValueError("Data DataFrame cannot be empty")
+
         try:
-            # Convert interval to string if Enum
-            if isinstance(interval, Interval):
-                interval_str = interval.value
-            else:
-                interval_str = interval
             
-            # Convert data to numpy array
+            # Convert data to numpy array (using correct converter for segment)
+            converter = self._get_converter()
             if isinstance(data, list):
-                arr = dict_to_ohlcv_array(data)
+                arr = converter(data)
             elif isinstance(data, pd.DataFrame):
                 arr = self._dataframe_to_array(data)
             elif isinstance(data, np.ndarray):
                 arr = data
             else:
                 raise ValueError(f"Unsupported data type: {type(data)}")
-            
+
             if len(arr) == 0:
                 logger.warning(f"Empty data array for {symbol} {interval_str}, nothing to save")
                 return False
-            
-            # Validate data if requested
-            is_valid, stats = ValidationRules.validate_ohlcv_array(arr)
+
+            # Validate data (using correct validator for segment)
+            validator = self._get_validator()
+            if self.is_derivatives:
+                is_valid, stats = validator.validate_options_array(arr)
+            else:
+                is_valid, stats = validator.validate_ohlcv_array(arr)
             if not is_valid:
                 logger.error(f"Data validation failed for {symbol} {interval_str}: {stats}")
                 logger.error(f"Invalid rows: {stats['invalid_details'][:3]}")
@@ -250,11 +459,11 @@ class HDF5Manager:
                         # Append to existing data
                         return self._append_ohlcv(f, path, arr, interval_str)
                 
-                # Create new dataset with blosc compression
+                # Create new dataset with blosc compression (using correct dtype for segment)
                 dset = f.create_dataset(
                     path,
                     data=arr,
-                    dtype=EquityOHLCVSchema.DTYPE,
+                    dtype=self._get_dtype(),
                     **comp_settings,
                 )
                 
@@ -269,7 +478,13 @@ class HDF5Manager:
                 )
                 for k, v in attrs.items():
                     dset.attrs[k] = v
-                
+
+                # Compute and store checksum for data integrity verification
+                data_bytes = arr.tobytes()
+                checksum = hashlib.sha256(data_bytes).hexdigest()
+                dset.attrs['checksum'] = checksum
+                dset.attrs['checksum_algorithm'] = 'sha256'
+
                 # Update file-level last_updated
                 f.attrs['last_updated'] = datetime.now().isoformat()
             
@@ -323,19 +538,27 @@ class HDF5Manager:
             new_dset = f.create_dataset(
                 path,
                 data=combined,
-                dtype=EquityOHLCVSchema.DTYPE,
+                dtype=self._get_dtype(),
                 **comp_settings,
             )
             
             # Restore and update attributes
             for k, v in attrs_backup.items():
-                new_dset.attrs[k] = v
-            
+                # Skip old checksum, we'll recalculate
+                if k not in ('checksum', 'checksum_algorithm'):
+                    new_dset.attrs[k] = v
+
             new_dset.attrs['start_date'] = str(combined[0]['timestamp'])
             new_dset.attrs['end_date'] = str(combined[-1]['timestamp'])
             new_dset.attrs['row_count'] = len(combined)
             new_dset.attrs['updated_at'] = datetime.now().isoformat()
-            
+
+            # Recalculate checksum for appended data
+            data_bytes = combined.tobytes()
+            checksum = hashlib.sha256(data_bytes).hexdigest()
+            new_dset.attrs['checksum'] = checksum
+            new_dset.attrs['checksum_algorithm'] = 'sha256'
+
             # Update file-level last_updated
             f.attrs['last_updated'] = datetime.now().isoformat()
             
@@ -359,7 +582,7 @@ class HDF5Manager:
     ) -> Union[pd.DataFrame, np.ndarray, None]:
         """
         Retrieve OHLCV data from database for a specific timeframe
-        
+
         Args:
             exchange: Exchange name
             symbol: Trading symbol
@@ -368,16 +591,38 @@ class HDF5Manager:
             end_date: Filter end date (inclusive)
             columns: Columns to retrieve (None = all)
             as_dataframe: Return as DataFrame (True) or numpy array (False)
-        
+
         Returns:
             DataFrame, numpy array, or None if not found
         """
+        # Input validation
+        if not exchange or not isinstance(exchange, str):
+            raise ValueError(f"Invalid exchange: {exchange}. Must be a non-empty string.")
+
+        exchange_upper = exchange.upper()
+        valid_exchanges = [e.value for e in Exchange]
+        if exchange_upper not in valid_exchanges:
+            raise ValueError(
+                f"Unknown exchange: {exchange}. Must be one of: {', '.join(valid_exchanges)}"
+            )
+
+        if not symbol or not isinstance(symbol, str):
+            raise ValueError(f"Invalid symbol: {symbol}. Must be a non-empty string.")
+
+        # Validate interval
+        if isinstance(interval, Interval):
+            interval_str = interval.value
+        elif isinstance(interval, str):
+            valid_intervals = [i.value for i in Interval]
+            if interval not in valid_intervals:
+                raise ValueError(
+                    f"Invalid interval: {interval}. Must be one of: {', '.join(valid_intervals)}"
+                )
+            interval_str = interval
+        else:
+            raise ValueError(f"Invalid interval type: {type(interval)}. Must be str or Interval enum.")
+
         try:
-            # Convert interval to string if Enum
-            if isinstance(interval, Interval):
-                interval_str = interval.value
-            else:
-                interval_str = interval
             
             path = self.structure.get_data_path(exchange, symbol, interval_str)
             
@@ -395,7 +640,26 @@ class HDF5Manager:
                 else:
                     # Direct read for smaller datasets
                     data = dset[:]
-                
+
+                # Verify data integrity via checksum
+                if 'checksum' in dset.attrs:
+                    stored_checksum = dset.attrs['checksum']
+                    checksum_algorithm = dset.attrs.get('checksum_algorithm', 'sha256')
+
+                    if checksum_algorithm == 'sha256':
+                        computed_checksum = hashlib.sha256(data.tobytes()).hexdigest()
+
+                        if stored_checksum != computed_checksum:
+                            logger.error(
+                                f"Data corruption detected in {path}! "
+                                f"Stored: {stored_checksum[:16]}..., Computed: {computed_checksum[:16]}..."
+                            )
+                            raise ValueError(f"Data corruption detected in {path}")
+                        else:
+                            logger.debug(f"Checksum verified for {path}")
+                    else:
+                        logger.warning(f"Unknown checksum algorithm: {checksum_algorithm}")
+
                 # Filter by date range
                 if start_date or end_date:
                     mask = np.ones(len(data), dtype=bool)
@@ -449,15 +713,42 @@ class HDF5Manager:
     ) -> bool:
         """
         Delete OHLCV dataset(s)
-        
+
         Args:
             exchange: Exchange name
             symbol: Trading symbol
             interval: Specific timeframe to delete (None = delete all timeframes)
-        
+
         Returns:
             True if successful
         """
+        # Input validation
+        if not exchange or not isinstance(exchange, str):
+            raise ValueError(f"Invalid exchange: {exchange}. Must be a non-empty string.")
+
+        exchange_upper = exchange.upper()
+        valid_exchanges = [e.value for e in Exchange]
+        if exchange_upper not in valid_exchanges:
+            raise ValueError(
+                f"Unknown exchange: {exchange}. Must be one of: {', '.join(valid_exchanges)}"
+            )
+
+        if not symbol or not isinstance(symbol, str):
+            raise ValueError(f"Invalid symbol: {symbol}. Must be a non-empty string.")
+
+        # Validate interval if provided
+        if interval is not None:
+            if isinstance(interval, Interval):
+                pass  # Valid enum
+            elif isinstance(interval, str):
+                valid_intervals = [i.value for i in Interval]
+                if interval not in valid_intervals:
+                    raise ValueError(
+                        f"Invalid interval: {interval}. Must be one of: {', '.join(valid_intervals)}"
+                    )
+            else:
+                raise ValueError(f"Invalid interval type: {type(interval)}. Must be str or Interval enum.")
+
         try:
             if interval:
                 # Delete specific interval
@@ -746,7 +1037,8 @@ class HDF5Manager:
                             # Get interval from path for optimal chunking
                             try:
                                 _, _, _, interval = name.strip('/').split('/')
-                            except:
+                            except (ValueError, IndexError):
+                                # Path doesn't have expected format, use default
                                 interval = 'day'
                             
                             # Get compression settings

@@ -3,17 +3,19 @@ Custom CSS styling for Kite Data Manager
 Navy/Gold professional theme
 """
 
-# Color palette
+# Color palette - Quantify-inspired theme
 COLORS = {
-    'primary': '#0A0E27',        # Deep navy - almost black
-    'accent': '#D4AF37',         # Muted gold
-    'accent_alt': '#C9A961',     # Champagne gold
-    'secondary': '#1A1F3A',      # Charcoal navy
-    'text_primary': '#F8FAFC',   # Off-white
-    'text_secondary': '#94A3B8', # Cool gray
+    'primary': '#0A0B14',        # Very dark navy/black
+    'accent': '#E6B865',         # Gold/amber accent
+    'accent_alt': '#D4A655',     # Darker gold
+    'secondary': '#1E2139',      # Dark slate blue (cards/panels)
+    'secondary_alt': '#1A1D2E',  # Slightly darker slate
+    'text_primary': '#E5E7EB',   # Light gray/white
+    'text_secondary': '#9CA3AF', # Medium gray
     'success': '#10B981',        # Emerald green
-    'alert': '#DC2626',          # Deep red
-    'borders': '#334155',        # Subtle slate
+    'warning': '#F59E0B',        # Amber/orange
+    'alert': '#EF4444',          # Red
+    'borders': '#2D3142',        # Subtle gray-blue
 }
 
 
@@ -32,30 +34,80 @@ def get_custom_css() -> str:
         color: {COLORS['text_primary']};
     }}
 
-    /* Header/Toolbar (Deploy button area) */
+    /* Hide entire Streamlit header */
     [data-testid="stHeader"] {{
-        background-color: {COLORS['secondary']};
-        border-bottom: 1px solid {COLORS['borders']};
+        display: none !important;
     }}
 
     header[data-testid="stHeader"] {{
-        background-color: {COLORS['secondary']} !important;
+        display: none !important;
     }}
 
-    /* Toolbar buttons */
+    /* Hide Deploy button and toolbar */
     [data-testid="stToolbar"] {{
-        background-color: {COLORS['secondary']};
-        color: {COLORS['text_primary']};
+        display: none !important;
     }}
 
-    /* Sidebar */
+    section[data-testid="stToolbar"] {{
+        display: none !important;
+    }}
+
+    .stDeployButton {{
+        display: none !important;
+    }}
+
+    /* Adjust main content area to account for removed header */
+    .main .block-container {{
+        padding-top: 3rem !important;
+        max-width: 100% !important;
+    }}
+
+    /* Ensure main app container doesn't clip navbar */
+    .stApp > div {{
+        overflow: visible !important;
+    }}
+
+    /* Force custom navbar to be visible */
+    #custom-navbar {{
+        display: flex !important;
+        visibility: visible !important;
+    }}
+
+    #custom-navbar > div {{
+        display: flex !important;
+        visibility: visible !important;
+    }}
+
+    /* Show and style the sidebar collapse button */
+    [data-testid="collapsedControl"] {{
+        display: flex !important;
+        position: fixed !important;
+        top: 1rem !important;
+        left: 1rem !important;
+        z-index: 999999 !important;
+        background-color: {COLORS['secondary']} !important;
+        border: 1px solid {COLORS['borders']} !important;
+        border-radius: 6px !important;
+        padding: 0.5rem !important;
+        transition: all 0.3s ease !important;
+    }}
+
+    [data-testid="collapsedControl"]:hover {{
+        background-color: {COLORS['borders']} !important;
+    }}
+
+    [data-testid="collapsedControl"] svg {{
+        color: {COLORS['text_primary']} !important;
+        fill: {COLORS['text_primary']} !important;
+    }}
+
+    /* Hide Sidebar Completely */
     [data-testid="stSidebar"] {{
-        background-color: {COLORS['secondary']};
-        border-right: 1px solid {COLORS['borders']};
+        display: none !important;
     }}
 
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {{
-        color: {COLORS['text_primary']};
+    [data-testid="collapsedControl"] {{
+        display: none !important;
     }}
 
     /* ==================== Typography ==================== */
@@ -96,12 +148,12 @@ def get_custom_css() -> str:
         padding: 0.5rem 1.5rem;
         font-weight: 600;
         transition: all 0.3s ease;
-        box-shadow: 0 2px 4px rgba(212, 175, 55, 0.2);
+        box-shadow: 0 2px 4px rgba(230, 184, 101, 0.2);
     }}
 
     .stButton > button:hover {{
         background-color: {COLORS['accent_alt']};
-        box-shadow: 0 4px 8px rgba(212, 175, 55, 0.3);
+        box-shadow: 0 4px 8px rgba(230, 184, 101, 0.3);
         transform: translateY(-1px);
     }}
 
@@ -171,7 +223,7 @@ def get_custom_css() -> str:
 
     /* Alert box */
     .alert-box {{
-        background-color: rgba(220, 38, 38, 0.1);
+        background-color: rgba(239, 68, 68, 0.1);
         border-left: 4px solid {COLORS['alert']};
         padding: 1rem;
         margin: 1rem 0;
@@ -221,7 +273,7 @@ def get_custom_css() -> str:
     }}
 
     .stDataFrame tbody tr:hover {{
-        background-color: rgba(212, 175, 55, 0.1);
+        background-color: rgba(230, 184, 101, 0.1);
     }}
 
     /* ==================== Status Indicators ==================== */
@@ -363,7 +415,7 @@ def get_custom_css() -> str:
     }}
 
     .auth-badge.not-authenticated {{
-        background-color: rgba(220, 38, 38, 0.2);
+        background-color: rgba(239, 68, 68, 0.2);
         color: {COLORS['alert']};
         border: 1px solid {COLORS['alert']};
     }}

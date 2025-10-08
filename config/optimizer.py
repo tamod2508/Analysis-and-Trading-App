@@ -5,8 +5,10 @@ Automatically scales down M4-optimized settings when running on M1
 
 import psutil
 import subprocess
-from typing import Dict, Any
-from .settings import config
+from typing import Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .settings import BaseConfig
 
 
 class ConfigOptimizer:
@@ -15,7 +17,6 @@ class ConfigOptimizer:
     IMMUTABLE_SETTINGS = {
         'HDF5_COMPRESSION',
         'HDF5_COMPRESSION_LEVEL',
-        'HDF5_CHUNK_SIZE',
         'HDF5_DRIVER',
         'DEFAULT_INTERVAL',
         'REDIRECT_URL',
@@ -26,11 +27,7 @@ class ConfigOptimizer:
         self.ram_gb = psutil.virtual_memory().total / (1024**3)
         self.is_m1_8gb = self._is_m1()
         self.optimizations_applied = []
-        
-        if self.is_m1_8gb:
-            self._apply_m1_settings()
-        else:
-            self._using_native_settings = True
+        self._using_native_settings = not self.is_m1_8gb
 
     def _detect_chip(self) -> str:
         try:
@@ -48,19 +45,36 @@ class ConfigOptimizer:
                 return 'M1'
             else:
                 return 'Unknown'
-        except:
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError, OSError) as e:
+            # sysctl not available or failed
+            return 'Unknown'
+        except Exception as e:
+            # Unexpected error
             return 'Unknown'
 
     def _is_m1(self) -> bool:
         return self.chip == 'M1' and self.ram_gb <= 10
 
-    def _apply_m1_settings(self):
+    def optimize_config(self, config: 'BaseConfig') -> 'BaseConfig':
+        """
+        Optimize config for current hardware (returns modified config)
+
+        Args:
+            config: Base configuration object
+
+        Returns:
+            Optimized configuration object (same instance, modified)
+        """
+        if not self.is_m1_8gb:
+            return config
+
+        return self._apply_m1_settings(config)
+
+    def _apply_m1_settings(self, config: 'BaseConfig') -> 'BaseConfig':
         
         profile = {
             'MAX_WORKERS': 6,
             'BATCH_SIZE': 150,
-            'CHUNK_SIZE': 20000,
-            'CHUNK_READ_SIZE': 150000,
 
             'HDF5_RDCC_NBYTES': 314572800,
             'HDF5_CACHE_SIZE': 20000,
@@ -130,11 +144,13 @@ class ConfigOptimizer:
                 applied += 1
 
         self._apply_m1_environment_optimizations()
-        
+
         # Store metadata for UI
         self.applied_count = applied
         self.skipped_count = len(skipped)
         self.skipped_settings = skipped
+
+        return config
 
     def _apply_m1_environment_optimizations(self):
         import os
@@ -168,9 +184,10 @@ class ConfigOptimizer:
         os.environ['APPLE_SILICON_M1'] = '1'
         os.environ['APPLE_SILICON_GEN'] = '1'
 
-    def get_info(self) -> Dict[str, Any]:
+    def get_info(self, config: 'BaseConfig') -> Dict[str, Any]:
+        """Get system and configuration info"""
         mem = psutil.virtual_memory()
-        
+
         return {
             'chip': self.chip,
             'ram_gb': round(self.ram_gb, 1),
@@ -180,7 +197,6 @@ class ConfigOptimizer:
             'is_travel_mode': self.is_m1_8gb,
             'max_workers': config.MAX_WORKERS,
             'batch_size': config.BATCH_SIZE,
-            'chunk_size': config.CHUNK_SIZE,
             'cache_mb': config.CACHE_SIZE_MB,
             'hdf5_cache_mb': round(config.HDF5_RDCC_NBYTES / (1024**2)),
             'data_cache_mb': config.DATA_CACHE_SIZE_MB,
@@ -192,10 +208,10 @@ class ConfigOptimizer:
             'optimizations': self.optimizations_applied if self.is_m1_8gb else [],
         }
     
-    def get_detailed_info(self) -> Dict[str, Any]:
+    def get_detailed_info(self, config: 'BaseConfig') -> Dict[str, Any]:
         """Get detailed system and config info for UI"""
         import os
-        
+
         try:
             macos_version = subprocess.run(
                 ['sw_vers', '-productVersion'],
@@ -203,13 +219,15 @@ class ConfigOptimizer:
                 text=True,
                 timeout=5
             ).stdout.strip()
-        except:
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError, OSError) as e:
             macos_version = "Unknown"
-        
+        except Exception as e:
+            macos_version = "Unknown"
+
         cpu_count = os.cpu_count()
-        
+
         return {
-            **self.get_info(),
+            **self.get_info(config),
             'macos_version': macos_version,
             'cpu_cores': cpu_count,
             'compression': config.HDF5_COMPRESSION,
@@ -224,13 +242,17 @@ class ConfigOptimizer:
         }
 
 
-# Auto-configure on import
+# Global optimizer instance (no longer auto-applies optimizations)
 optimizer = ConfigOptimizer()
 
 
 def get_system_info() -> Dict[str, Any]:
-    return optimizer.get_info()
+    """Get system info using global config (for backward compatibility)"""
+    from .settings import config
+    return optimizer.get_info(config)
 
 
 def get_detailed_system_info() -> Dict[str, Any]:
-    return optimizer.get_detailed_info()
+    """Get detailed system info using global config (for backward compatibility)"""
+    from .settings import config
+    return optimizer.get_detailed_info(config)

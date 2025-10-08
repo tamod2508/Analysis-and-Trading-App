@@ -3,143 +3,187 @@ Application configuration settings
 """
 
 import os
+import logging
+import logging.config
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
 from dotenv import load_dotenv
 import psutil
-from .constants import Interval, CHUNK_SIZES
+from .constants import Interval, HDF5_STORAGE_CHUNKS, CompressionType
 
 # Load environment variables
 load_dotenv()
 
+# Get logger
+logger = logging.getLogger(__name__)
+
+
+def configure_logging_from_yaml(config_path: Path = None) -> bool:
+    """
+    Configure logging from YAML file
+
+    Args:
+        config_path: Path to logging config YAML file. If None, uses default.
+
+    Returns:
+        bool: True if loaded successfully, False otherwise
+    """
+    if config_path is None:
+        config_path = Path(__file__).parent / "logging_config.yaml"
+
+    if not config_path.exists():
+        logger.warning(f"Logging config file not found: {config_path}")
+        return False
+
+    try:
+        import yaml
+        with open(config_path, 'r') as f:
+            config_dict = yaml.safe_load(f)
+        logging.config.dictConfig(config_dict)
+        logger.info(f"Logging configured from: {config_path}")
+        return True
+    except ImportError:
+        logger.warning("PyYAML not installed. Using default logging configuration.")
+        return False
+    except Exception as e:
+        logger.error(f"Error loading logging config: {e}")
+        return False
+
 
 @dataclass
-class AppConfig:
+class BaseConfig:
+    """Base configuration shared across all environments"""
 
+    # Directory paths
     BASE_DIR: Path = Path(__file__).parent.parent
     DATA_DIR: Path = BASE_DIR / "data"
     BACKUP_DIR: Path = DATA_DIR / "backups"
     EXPORTS_DIR: Path = BASE_DIR / "exports"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
+    # HDF5 settings
     HDF5_DIR: Path = DATA_DIR / "hdf5"
     HDF5_FILE_PATTERN: str = "{segment}.h5"
-    HDF5_COMPRESSION: str = "blosc:lz4"  # Fast compression
-    HDF5_COMPRESSION_LEVEL: int = 5  # Balanced compression level
-
-    HDF5_CACHE_SIZE: int = 100000  # Pages (~400MB cache)
-    HDF5_RDCC_NBYTES: int = 2147483648  # 2GB read cache
+    HDF5_COMPRESSION: str = CompressionType.BLOSC_LZ4.value
+    HDF5_COMPRESSION_LEVEL: int = 5
+    HDF5_CACHE_SIZE: int = 100000
     HDF5_RDCC_NSLOTS: int = 200003
-    HDF5_RDCC_W0: float = 0.85  # preemption
-    HDF5_CHUNK_SIZE: tuple = (10000,)
-
-    # HDF5 Driver settings
+    HDF5_RDCC_W0: float = 0.85
     HDF5_DRIVER: str = "sec2"
-    HDF5_SIEVE_BUF_SIZE: int = 524288  # 512KB sieve buffer
-    HDF5_META_BLOCK_SIZE: int = 2097152  # 2MB metadata block
+    HDF5_SIEVE_BUF_SIZE: int = 524288
+    HDF5_META_BLOCK_SIZE: int = 2097152
 
+    # Kite API credentials
     KITE_API_KEY: str = os.getenv("KITE_API_KEY", "")
     KITE_API_SECRET: str = os.getenv("KITE_API_SECRET", "")
     KITE_ACCESS_TOKEN: str = os.getenv("KITE_ACCESS_TOKEN", "")
     REDIRECT_URL: str = "http://127.0.0.1:8501"
 
-    # Rate limiting
-    API_RATE_LIMIT: int = 3  # Kite API hard limit
-    API_RATE_SAFETY_MARGIN: float = 0.05  # Extra safety buffer (50ms) to avoid rate limit errors
-    API_TIMEOUT: int = 60  # Generous timeout
-    MAX_RETRIES: int = 7  # Aggressive retry strategy
-    RETRY_DELAY: int = 2  # Quick retry
-    RETRY_BACKOFF: float = 1.3  # Gentler backoff
+    # Rate limiting (common across environments)
+    # As per Kite Connect API documentation: 3 requests per second
+    KITE_API_RATE_LIMIT_PER_SECOND: int = 3
+    # Safety margin of 50ms between requests to avoid rate limit
+    API_RATE_SAFETY_MARGIN_SECONDS: float = 0.05
+    # API request timeout in seconds
+    API_TIMEOUT_SECONDS: int = 60
+    # Initial retry delay in seconds
+    RETRY_DELAY_SECONDS: int = 2
+    # Exponential backoff multiplier (1.3x per retry)
+    RETRY_BACKOFF_MULTIPLIER: float = 1.3
 
+    # Backward compatibility aliases
+    API_RATE_LIMIT: int = KITE_API_RATE_LIMIT_PER_SECOND
+    API_RATE_SAFETY_MARGIN: float = API_RATE_SAFETY_MARGIN_SECONDS
+    API_TIMEOUT: int = API_TIMEOUT_SECONDS
+    RETRY_DELAY: int = RETRY_DELAY_SECONDS
+    RETRY_BACKOFF: float = RETRY_BACKOFF_MULTIPLIER
+
+    # Batch processing
     BATCH_SIZE: int = 500
     BATCH_PAUSE_SECONDS: int = 0.5
     BATCH_MEMORY_CHECK: bool = True
     BATCH_GC_INTERVAL: int = 200
 
+    # Progress reporting
     SHOW_PROGRESS_EVERY: int = 100
     LOG_PROGRESS_EVERY: int = 500
 
     # Historical data
     MAX_HISTORICAL_RECORDS_PER_REQUEST: int = 1000
-    HISTORICAL_DATA_CHUNK_DAYS: int = 1095
 
+    # API Fetch Chunks (in days)
+    # When fetching large date ranges, split into chunks to avoid timeouts.
+    # Larger values = fewer API calls but higher memory usage
+    # Smaller values = more API calls but lower memory usage
+    API_FETCH_CHUNK_DAYS: int = 1095  # ~3 years per chunk
+
+    # DEPRECATED: Use API_FETCH_CHUNK_DAYS instead
+    HISTORICAL_DATA_CHUNK_DAYS: int = API_FETCH_CHUNK_DAYS  # Backward compatibility
     DEFAULT_START_DATE: str = "2015-01-01"
     DEFAULT_END_DATE: str = field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d")
     )
     DEFAULT_INTERVAL: str = "day"
-
     INTERVALS: list = field(
         default_factory=lambda: [
-            "minute",
-            "3minute",
-            "5minute",
-            "10minute",
-            "15minute",
-            "30minute",
-            "60minute",
-            "day",
+            "minute", "3minute", "5minute", "10minute",
+            "15minute", "30minute", "60minute", "day",
         ]
     )
 
+    # UI settings
     PAGE_TITLE: str = "Kite Data Manager"
     PAGE_ICON: str = None
     LAYOUT: str = "wide"
     INITIAL_SIDEBAR_STATE: str = "expanded"
 
-    CHUNK_SIZE: int = 50000
-    MAX_WORKERS: int = 12
-    CACHE_SIZE_MB: int = 6144
-
+    # Processing settings
     USE_MULTIPROCESSING: bool = True
-    MULTIPROCESSING_METHOD: str = "spawn"
-
-    PANDAS_COMPUTE_THREADS: int = 12  # Over-provision for better scheduling
-    NUMPY_THREADS: int = 12
-
-    MAX_MEMORY_PERCENT: float = 0.87  # Use 87% of RAM
+    MULTIPROCESSING_METHOD: str = "spawn"  # Use 'spawn' for clean process state
+    MAX_MEMORY_PERCENT: float = 0.87  # Use up to 87% of RAM before pausing
 
     # Memory monitoring
-    ENABLE_MEMORY_MONITORING: bool = True
-    MEMORY_CHECK_INTERVAL: int = 120  # Check every 2 minutes
-    MEMORY_WARNING_THRESHOLD: float = 0.93
-    MEMORY_CRITICAL_THRESHOLD: float = 0.97
+    MEMORY_CHECK_INTERVAL: int = 120  # Check memory every 120 seconds
+    MEMORY_WARNING_THRESHOLD: float = 0.93  # Warn at 93% memory usage
+    MEMORY_CRITICAL_THRESHOLD: float = 0.97  # Critical alert at 97% memory usage
 
     # Chunked processing
     USE_CHUNKED_PROCESSING: bool = True
-    CHUNK_READ_SIZE: int = 500000
 
+    # Dask settings
     USE_DASK: bool = True
     DASK_WORKERS: int = 10
     DASK_THREADS_PER_WORKER: int = 2
     DASK_MEMORY_LIMIT: str = "20GB"
 
+    # Garbage collection
     ENABLE_AGGRESSIVE_GC: bool = False
-    GC_INTERVAL: int = 1000  # Very rare GC
+    GC_INTERVAL: int = 1000
 
-    AUTO_BACKUP: bool = True
+    # Backup settings
     BACKUP_BEFORE_FETCH: bool = True
     MAX_BACKUPS: int = 3
     BACKUP_COMPRESSION: bool = False
     BACKUP_ASYNC: bool = True
-    BACKUP_WORKERS: int = 3  # Parallel backup
+    BACKUP_WORKERS: int = 3
 
-    STREAMLIT_CACHE_TTL: int = 7200  # 2 hours
+    # Streamlit caching
+    STREAMLIT_CACHE_TTL: int = 7200
     STREAMLIT_CACHE_MAX_ENTRIES: int = 500
 
+    # Data caching
     ENABLE_DATA_CACHE: bool = True
     DATA_CACHE_SIZE_MB: int = 8192
     DATA_CACHE_EVICTION: str = "LRU"
-
     ENABLE_QUERY_CACHE: bool = True
-    QUERY_CACHE_SIZE_MB: int = 2048  # 2GB query cache
+    QUERY_CACHE_SIZE_MB: int = 2048
 
-    # Enable memory mapping for large files
+    # Memory mapping
     ENABLE_MMAP: bool = True
-    MMAP_THRESHOLD_MB: int = 100  # Use mmap for files > 100MB
+    MMAP_THRESHOLD_MB: int = 100
 
-    # Pre-fetch and pre-load
+    # Pre-fetch
     ENABLE_PREFETCH: bool = True
     PREFETCH_WORKERS: int = 4
 
@@ -147,12 +191,22 @@ class AppConfig:
     ENABLE_PARALLEL_IO: bool = True
     PARALLEL_IO_WORKERS: int = 8
 
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    # Logging
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     LOG_FILE: Path = LOGS_DIR / "app.log"
-    LOG_MAX_BYTES: int = 100 * 1024 * 1024  # 100MB
+    LOG_MAX_BYTES: int = 100 * 1024 * 1024
     LOG_BACKUP_COUNT: int = 10
 
+    # Environment-specific settings (to be overridden)
+    LOG_LEVEL: str = "INFO"
+    MAX_RETRIES: int = 7
+    MAX_WORKERS: int = 12
+    CACHE_SIZE_MB: int = 6144
+    PANDAS_COMPUTE_THREADS: int = 12
+    NUMPY_THREADS: int = 12
+    HDF5_RDCC_NBYTES: int = 2147483648
+    ENABLE_MEMORY_MONITORING: bool = True
+    AUTO_BACKUP: bool = True
     LOG_PERFORMANCE: bool = True
     LOG_MEMORY_USAGE: bool = True
     LOG_DETAILED_METRICS: bool = True
@@ -178,7 +232,23 @@ class AppConfig:
         self._log_system_info()
 
     def _configure_numerical_libraries(self):
-        # Thread configuration
+        """Configure numerical libraries with auto-detected optimal thread counts"""
+        import platform
+
+        # Auto-detect optimal thread count (use 75% of CPU cores, leave some for system)
+        cpu_count = os.cpu_count() or 1
+        optimal_threads = max(1, int(cpu_count * 0.75))
+
+        # Override instance attributes with detected values if they're at default
+        # This ensures auto-detection works while allowing manual override
+        if self.NUMPY_THREADS == 12:  # Default value
+            self.NUMPY_THREADS = optimal_threads
+        if self.PANDAS_COMPUTE_THREADS == 12:
+            self.PANDAS_COMPUTE_THREADS = optimal_threads
+        if self.MAX_WORKERS == 12:
+            self.MAX_WORKERS = optimal_threads
+
+        # Thread configuration for numerical libraries
         os.environ["OMP_NUM_THREADS"] = str(self.NUMPY_THREADS)
         os.environ["OPENBLAS_NUM_THREADS"] = str(self.NUMPY_THREADS)
         os.environ["MKL_NUM_THREADS"] = str(self.NUMPY_THREADS)
@@ -186,9 +256,20 @@ class AppConfig:
         os.environ["NUMEXPR_NUM_THREADS"] = str(self.NUMPY_THREADS)
         os.environ["NUMBA_NUM_THREADS"] = str(self.NUMPY_THREADS)
 
-        # Apple Accelerate framework
-        os.environ["BLAS"] = "Accelerate"
-        os.environ["LAPACK"] = "Accelerate"
+        # Detect BLAS/LAPACK backend based on platform
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            os.environ["BLAS"] = "Accelerate"
+            os.environ["LAPACK"] = "Accelerate"
+            logger.info(f"Using Apple Accelerate framework (macOS)")
+        elif system == "Linux":
+            # Prefer MKL if available, otherwise OpenBLAS
+            os.environ["BLAS"] = "openblas"
+            os.environ["LAPACK"] = "openblas"
+            logger.info(f"Using OpenBLAS (Linux)")
+        elif system == "Windows":
+            # Windows typically uses MKL with NumPy
+            logger.info(f"Using default BLAS/LAPACK (Windows)")
 
         # Memory optimization
         os.environ["PANDAS_MEMORY_EFFICIENT"] = "0"  # Prioritize speed
@@ -202,6 +283,8 @@ class AppConfig:
         os.environ["JOBLIB_MULTIPROCESSING"] = "1"
         os.environ["LOKY_MAX_CPU_COUNT"] = str(self.MAX_WORKERS)
 
+        logger.info(f"Thread configuration: {self.NUMPY_THREADS} threads (CPU cores: {cpu_count})")
+
     def _configure_system_limits(self):
         """Set system-level optimizations"""
         try:
@@ -209,8 +292,12 @@ class AppConfig:
 
             # Increase file descriptors
             resource.setrlimit(resource.RLIMIT_NOFILE, (8192, 8192))
-        except:
-            pass
+            logger.info("File descriptor limit increased to 8192")
+        except (ImportError, ValueError, OSError) as e:
+            # resource module not available on Windows, or permission denied
+            logger.debug(f"Could not set system limits: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error setting system limits: {e}")
 
     def _log_system_info(self):
         ram_gb = psutil.virtual_memory().total / (1024**3)
@@ -275,12 +362,13 @@ class AppConfig:
         else:
             interval_enum = interval
 
-        # Get chunk size for this interval
-        default_chunk_size = CHUNK_SIZES.get(interval_enum, 1000)
+        # Get HDF5 storage chunk size for this interval
+        default_chunk_size = HDF5_STORAGE_CHUNKS.get(interval_enum, 1000)
 
         if data_size is not None:
             # Don't make chunks bigger than data
-            chunk_size = min(default_chunk_size, max(10, data_size))
+            # Allow minimum of 1 for single-record datasets (e.g., testing)
+            chunk_size = min(default_chunk_size, max(1, data_size))
         else:
             chunk_size = default_chunk_size
 
@@ -292,5 +380,59 @@ class AppConfig:
         }
 
 
-# Global config instance
-config = AppConfig()
+@dataclass
+class DevelopmentConfig(BaseConfig):
+    """Development environment configuration"""
+    LOG_LEVEL: str = "DEBUG"
+    MAX_RETRIES: int = 3
+    HDF5_RDCC_NBYTES: int = 314572800  # 300MB cache (smaller for dev)
+    ENABLE_MEMORY_MONITORING: bool = False
+    AUTO_BACKUP: bool = True
+    LOG_PERFORMANCE: bool = False
+    LOG_MEMORY_USAGE: bool = False
+    LOG_DETAILED_METRICS: bool = False
+
+
+@dataclass
+class ProductionConfig(BaseConfig):
+    """Production environment configuration"""
+    LOG_LEVEL: str = "INFO"
+    MAX_RETRIES: int = 7
+    HDF5_RDCC_NBYTES: int = 2147483648  # 2GB cache (full size for prod)
+    ENABLE_MEMORY_MONITORING: bool = True
+    AUTO_BACKUP: bool = True
+    LOG_PERFORMANCE: bool = True
+    LOG_MEMORY_USAGE: bool = True
+    LOG_DETAILED_METRICS: bool = True
+
+
+@dataclass
+class TestingConfig(BaseConfig):
+    """Testing environment configuration"""
+    LOG_LEVEL: str = "WARNING"
+    MAX_RETRIES: int = 3
+    HDF5_RDCC_NBYTES: int = 104857600  # 100MB cache (minimal for testing)
+    ENABLE_MEMORY_MONITORING: bool = False
+    AUTO_BACKUP: bool = False  # No auto-backup in tests
+    LOG_PERFORMANCE: bool = False
+    LOG_MEMORY_USAGE: bool = False
+    LOG_DETAILED_METRICS: bool = False
+    STREAMLIT_CACHE_TTL: int = 0  # No caching in tests
+
+
+# Auto-select configuration based on environment
+ENV = os.getenv("KITE_ENV", "development").lower()
+
+if ENV == "production":
+    base_config = ProductionConfig()
+elif ENV == "testing" or ENV == "test":
+    base_config = TestingConfig()
+else:
+    base_config = DevelopmentConfig()
+
+# Apply hardware-specific optimizations (M1 8GB adjustments)
+from .optimizer import optimizer
+config = optimizer.optimize_config(base_config)
+
+# Backward compatibility alias
+AppConfig = type(config)

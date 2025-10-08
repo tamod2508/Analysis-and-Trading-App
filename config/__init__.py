@@ -4,21 +4,35 @@
 Configuration package with automatic hardware adaptation
 """
 
-from .settings import config, AppConfig
+from .settings import config, AppConfig, configure_logging_from_yaml
 from .constants import (
     # Enums
     Exchange,
     Interval,
     InstrumentType,
     Segment,
+    CompressionType,
+
+    # Exchange-Segment mappings
+    EXCHANGE_TO_SEGMENT,
+    SEGMENT_TO_EXCHANGES,
 
     # Validation limits
+    ValidationLimits,
+    VALIDATION_LIMITS,
     MIN_PRICE,
     MAX_PRICE,
     MIN_VOLUME,
     MAX_VOLUME,
     MIN_DATE,
     MAX_DATE,
+
+    # File size limits
+    MAX_HDF5_FILE_SIZE_GB,
+    MAX_BACKUP_SIZE_GB,
+    MAX_EXPORT_SIZE_MB,
+    MAX_LOG_FILE_SIZE_MB,
+    MAX_TOTAL_DATA_SIZE_GB,
 
     # Application Configuration
     PRIMARY_INTERVALS,
@@ -53,7 +67,8 @@ from .constants import (
     CA_HIGH_CONFIDENCE_THRESHOLD,
     CA_MEDIUM_CONFIDENCE_THRESHOLD,
 
-    CHUNK_SIZES
+    HDF5_STORAGE_CHUNKS,
+    CHUNK_SIZES  # Deprecated alias
 )
 from .optimizer import optimizer, get_system_info, get_detailed_system_info
 
@@ -61,6 +76,7 @@ __all__ = [
     # Core config
     'config',
     'AppConfig',
+    'configure_logging_from_yaml',
 
     # Validation
     'MIN_PRICE',
@@ -69,6 +85,13 @@ __all__ = [
     'MAX_VOLUME',
     'MIN_DATE',
     'MAX_DATE',
+
+    # File size limits
+    'MAX_HDF5_FILE_SIZE_GB',
+    'MAX_BACKUP_SIZE_GB',
+    'MAX_EXPORT_SIZE_MB',
+    'MAX_LOG_FILE_SIZE_MB',
+    'MAX_TOTAL_DATA_SIZE_GB',
 
     # Optimizer
     'optimizer',
@@ -80,6 +103,15 @@ __all__ = [
     'Interval',
     'InstrumentType',
     'Segment',
+    'CompressionType',
+
+    # Exchange-Segment mappings
+    'EXCHANGE_TO_SEGMENT',
+    'SEGMENT_TO_EXCHANGES',
+
+    # Validation limits (new)
+    'ValidationLimits',
+    'VALIDATION_LIMITS',
 
     # Application Configuration
     'PRIMARY_INTERVALS',
@@ -114,5 +146,6 @@ __all__ = [
     'CA_HIGH_CONFIDENCE_THRESHOLD',
     'CA_MEDIUM_CONFIDENCE_THRESHOLD',
 
-    'CHUNK_SIZES'
+    'HDF5_STORAGE_CHUNKS',
+    'CHUNK_SIZES'  # Deprecated alias
 ]
