@@ -11,7 +11,7 @@ from kiteconnect import KiteConnect
 import pandas as pd
 
 from config import config
-from config.constants import Exchange, Interval, API_LIMITS
+from config.constants import Exchange, Interval, API_LIMITS, Segment
 from database.data_validator import DataValidator
 from database.hdf5_manager import HDF5Manager
 
@@ -49,7 +49,7 @@ class KiteClient:
         self.min_request_interval = (1.0 / config.API_RATE_LIMIT) + config.API_RATE_SAFETY_MARGIN
 
         # Validator and database
-        self.validator = DataValidator(strict_mode=False)
+        self.validator = DataValidator()
         self.db = HDF5Manager()
 
         actual_rate = 1.0 / self.min_request_interval
@@ -218,6 +218,94 @@ class KiteClient:
         logger.info(f"Total records fetched for {symbol}: {len(all_data)}")
         return all_data
     
+    def get_existing_date_range(
+        self,
+        exchange: str,
+        symbol: str,
+        interval: str,
+    ) -> Optional[Tuple[datetime, datetime]]:
+        """
+        Get the date range of existing data in the database
+
+        Args:
+            exchange: NSE, BSE
+            symbol: Trading symbol
+            interval: Timeframe
+
+        Returns:
+            Tuple of (start_date, end_date) if data exists, None otherwise
+        """
+        try:
+            data_info = self.db.get_data_info(exchange, symbol, interval)
+
+            if not data_info or 'start_date' not in data_info:
+                return None
+
+            start_str = data_info.get('start_date')
+            end_str = data_info.get('end_date')
+
+            if not start_str or not end_str:
+                return None
+
+            # Dates are stored as Unix timestamps (strings)
+            # Convert to datetime
+            start_timestamp = int(start_str)
+            end_timestamp = int(end_str)
+
+            start_date = datetime.fromtimestamp(start_timestamp)
+            end_date = datetime.fromtimestamp(end_timestamp)
+
+            return (start_date, end_date)
+
+        except Exception as e:
+            logger.debug(f"Could not get existing date range for {exchange}:{symbol}: {e}")
+            return None
+
+    def calculate_missing_ranges(
+        self,
+        exchange: str,
+        symbol: str,
+        interval: str,
+        requested_start: datetime,
+        requested_end: datetime,
+    ) -> List[Tuple[datetime, datetime]]:
+        """
+        Calculate missing date ranges that need to be fetched
+
+        Args:
+            exchange: NSE, BSE
+            symbol: Trading symbol
+            interval: Timeframe
+            requested_start: Desired start date
+            requested_end: Desired end date
+
+        Returns:
+            List of (start, end) tuples representing missing ranges
+        """
+        existing_range = self.get_existing_date_range(exchange, symbol, interval)
+
+        # No existing data - fetch full range
+        if not existing_range:
+            logger.info(f"No existing data for {exchange}:{symbol} [{interval}] - will fetch full range")
+            return [(requested_start, requested_end)]
+
+        existing_start, existing_end = existing_range
+        logger.info(f"Existing data: {existing_start.date()} to {existing_end.date()}")
+
+        missing_ranges = []
+
+        # Only fetch NEW data after the existing end date
+        # Don't try to backfill - if data wasn't there before, it won't be there now
+        if requested_end > existing_end:
+            gap_start = existing_end + timedelta(days=1)
+            gap_end = requested_end
+            logger.info(f"New data to fetch: {gap_start.date()} to {gap_end.date()}")
+            missing_ranges.append((gap_start, gap_end))
+        else:
+            logger.info(f"All requested data already exists for {exchange}:{symbol} [{interval}]")
+
+        return missing_ranges
+
     def fetch_and_save(
         self,
         exchange: str,
@@ -228,10 +316,11 @@ class KiteClient:
         interval: str,
         validate: bool = True,
         overwrite: bool = False,
+        incremental: bool = True,
     ) -> Dict:
         """
         Complete workflow: fetch → validate → save
-        
+
         Args:
             exchange: NSE, BSE
             symbol: Trading symbol
@@ -241,22 +330,57 @@ class KiteClient:
             interval: Timeframe
             validate: Run validation before saving
             overwrite: Overwrite existing data
-        
+            incremental: Only fetch missing date ranges (default: True)
+
         Returns:
             Dict with operation summary
         """
         start_time = time.time()
-        
+
         try:
-            # Fetch data
-            logger.info(f"Starting fetch for {exchange}:{symbol} [{interval}]")
-            data = self.fetch_historical_data_chunked(
-                instrument_token,
-                symbol,
-                from_date,
-                to_date,
-                interval
-            )
+            # Determine what to fetch
+            if overwrite or not incremental:
+                # Full fetch
+                logger.info(f"Starting {'FULL' if overwrite else 'NON-INCREMENTAL'} fetch for {exchange}:{symbol} [{interval}]")
+                ranges_to_fetch = [(from_date, to_date)]
+            else:
+                # Incremental fetch - only missing ranges
+                logger.info(f"Starting INCREMENTAL fetch for {exchange}:{symbol} [{interval}]")
+                ranges_to_fetch = self.calculate_missing_ranges(
+                    exchange,
+                    symbol,
+                    interval,
+                    from_date,
+                    to_date
+                )
+
+            # If no ranges to fetch, return success
+            if not ranges_to_fetch:
+                logger.info(f"✓ All data already exists for {exchange}:{symbol} [{interval}]")
+                return {
+                    'success': True,
+                    'symbol': symbol,
+                    'interval': interval,
+                    'records': 0,
+                    'message': 'All data already exists (incremental update)',
+                    'elapsed_seconds': round(time.time() - start_time, 2),
+                }
+
+            # Fetch all missing ranges
+            all_data = []
+            for range_start, range_end in ranges_to_fetch:
+                logger.info(f"Fetching range: {range_start.date()} to {range_end.date()}")
+                range_data = self.fetch_historical_data_chunked(
+                    instrument_token,
+                    symbol,
+                    range_start,
+                    range_end,
+                    interval
+                )
+                if range_data:
+                    all_data.extend(range_data)
+
+            data = all_data
             
             if not data:
                 return {
@@ -329,7 +453,216 @@ class KiteClient:
                 'interval': interval,
                 'error': str(e)
             }
-    
+
+    def fetch_and_save_equity(
+        self,
+        symbol: str,
+        nse_instrument_token: Optional[int] = None,
+        bse_instrument_token: Optional[int] = None,
+        from_date: datetime = None,
+        to_date: datetime = None,
+        interval: str = None,
+        validate: bool = True,
+        overwrite: bool = False,
+        incremental: bool = True,
+    ) -> Dict:
+        """
+        Fetch equity data with NSE-first, BSE-fallback logic
+
+        This method implements smart exchange selection:
+        1. Try NSE first (higher liquidity, better data quality)
+        2. Only fall back to BSE if NSE has NO DATA available
+        3. If NSE has data but validation/save fails, don't fall back (data exists)
+
+        Args:
+            symbol: Trading symbol (should be same on both exchanges)
+            nse_instrument_token: NSE instrument token (optional)
+            bse_instrument_token: BSE instrument token (optional)
+            from_date: Start date
+            to_date: End date
+            interval: Timeframe
+            validate: Run validation before saving
+            overwrite: Overwrite existing data
+            incremental: Only fetch missing date ranges (default: True)
+
+        Returns:
+            Dict with operation summary (includes which exchange was used)
+        """
+        if not nse_instrument_token and not bse_instrument_token:
+            return {
+                'success': False,
+                'symbol': symbol,
+                'interval': interval,
+                'error': 'No instrument tokens provided (need at least NSE or BSE)'
+            }
+
+        # Try NSE first
+        nse_has_data = False
+        nse_result = None
+
+        if nse_instrument_token:
+            logger.info(f"Attempting to fetch {symbol} from NSE (preferred)")
+
+            try:
+                # Fetch data from NSE
+                nse_data = self.fetch_historical_data_chunked(
+                    nse_instrument_token,
+                    symbol,
+                    from_date,
+                    to_date,
+                    interval
+                )
+
+                # Check if we got data
+                if nse_data and len(nse_data) > 0:
+                    nse_has_data = True
+                    logger.info(f"✓ NSE has data for {symbol} ({len(nse_data)} records)")
+
+                    # Now validate and save
+                    nse_result = self.fetch_and_save(
+                        exchange='NSE',
+                        symbol=symbol,
+                        instrument_token=nse_instrument_token,
+                        from_date=from_date,
+                        to_date=to_date,
+                        interval=interval,
+                        validate=validate,
+                        overwrite=overwrite,
+                        incremental=incremental
+                    )
+
+                    nse_result['exchange_used'] = 'NSE'
+                    nse_result['fallback_used'] = False
+                    return nse_result
+                else:
+                    logger.warning(f"NSE returned no data for {symbol}")
+
+            except Exception as e:
+                logger.warning(f"NSE fetch failed for {symbol}: {e}")
+
+        # Fallback to BSE only if NSE has no data
+        if bse_instrument_token and not nse_has_data:
+            if nse_instrument_token:
+                logger.info(f"Falling back to BSE for {symbol} (NSE had no data)")
+            else:
+                logger.info(f"Fetching {symbol} from BSE (no NSE token available)")
+
+            bse_result = self.fetch_and_save(
+                exchange='BSE',
+                symbol=symbol,
+                instrument_token=bse_instrument_token,
+                from_date=from_date,
+                to_date=to_date,
+                interval=interval,
+                validate=validate,
+                overwrite=overwrite,
+                incremental=incremental
+            )
+
+            if bse_result['success']:
+                logger.info(f"✓ Successfully fetched {symbol} from BSE")
+                bse_result['exchange_used'] = 'BSE'
+                bse_result['fallback_used'] = bool(nse_instrument_token)
+                return bse_result
+            else:
+                logger.error(f"BSE fetch failed for {symbol}: {bse_result.get('error', 'Unknown error')}")
+                return bse_result
+
+        # If NSE had data, return that result (even if it failed validation/save)
+        if nse_has_data and nse_result:
+            return nse_result
+
+        # No data from either exchange
+        return {
+            'success': False,
+            'symbol': symbol,
+            'interval': interval,
+            'error': 'No data available from NSE or BSE'
+        }
+
+    def fetch_equity_by_symbol(
+        self,
+        symbol: str,
+        from_date: datetime,
+        to_date: datetime,
+        interval: str,
+        validate: bool = True,
+        overwrite: bool = False,
+        incremental: bool = True,
+    ) -> Dict:
+        """
+        Fetch equity data by symbol name (auto-lookup instrument tokens)
+
+        This is a convenience method that:
+        1. Looks up the symbol in both NSE and BSE
+        2. Extracts instrument tokens
+        3. Calls fetch_and_save_equity() with NSE-first logic
+
+        Args:
+            symbol: Trading symbol (e.g., 'RELIANCE', 'TCS')
+            from_date: Start date
+            to_date: End date
+            interval: Timeframe
+            validate: Run validation before saving
+            overwrite: Overwrite existing data
+            incremental: Only fetch missing date ranges (default: True)
+
+        Returns:
+            Dict with operation summary
+        """
+        logger.info(f"Looking up instrument tokens for {symbol}")
+
+        try:
+            # Fetch instruments from both exchanges
+            nse_instruments = self.get_instruments('NSE')
+            bse_instruments = self.get_instruments('BSE')
+
+            # Search for the symbol
+            nse_token = None
+            bse_token = None
+
+            for inst in nse_instruments:
+                if inst.get('tradingsymbol') == symbol:
+                    nse_token = inst.get('instrument_token')
+                    logger.info(f"Found {symbol} on NSE (token: {nse_token})")
+                    break
+
+            for inst in bse_instruments:
+                if inst.get('tradingsymbol') == symbol:
+                    bse_token = inst.get('instrument_token')
+                    logger.info(f"Found {symbol} on BSE (token: {bse_token})")
+                    break
+
+            if not nse_token and not bse_token:
+                return {
+                    'success': False,
+                    'symbol': symbol,
+                    'interval': interval,
+                    'error': f'Symbol {symbol} not found on NSE or BSE'
+                }
+
+            # Use the NSE-first logic
+            return self.fetch_and_save_equity(
+                symbol=symbol,
+                nse_instrument_token=nse_token,
+                bse_instrument_token=bse_token,
+                from_date=from_date,
+                to_date=to_date,
+                interval=interval,
+                validate=validate,
+                overwrite=overwrite,
+                incremental=incremental
+            )
+
+        except Exception as e:
+            logger.error(f"Error looking up symbol {symbol}: {e}")
+            return {
+                'success': False,
+                'symbol': symbol,
+                'interval': interval,
+                'error': f'Failed to lookup symbol: {str(e)}'
+            }
+
     def fetch_multiple_symbols(
         self,
         instruments: List[Dict],

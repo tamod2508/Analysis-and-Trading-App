@@ -3,14 +3,13 @@ Kite Connect Authentication Handler
 Manages OAuth2 login flow and token persistence
 """
 
-import os
 import logging
 from typing import Optional, Dict
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 
 from config import config
+from config.constants import IST
 
 logger = logging.getLogger(__name__)
 
@@ -30,20 +29,17 @@ class AuthHandler:
     def __init__(self, api_key: str = None, api_secret: str = None):
         """
         Initialize auth handler
-        
-        Args:
-            api_key: Kite API key (default: from config)
-            api_secret: Kite API secret (default: from config)
         """
         self.api_key = api_key or config.KITE_API_KEY
         self.api_secret = api_secret or config.KITE_API_SECRET
-        
+
         if not self.api_key or not self.api_secret:
             raise ValueError("API key and secret must be configured in .env file")
-        
+
         self.kite = KiteConnect(api_key=self.api_key)
         self.access_token = None
-        
+        self.token_created_at = None  # Timestamp when token was created
+
         logger.info("AuthHandler initialized")
     
     def get_login_url(self) -> str:
@@ -89,91 +85,216 @@ class AuthHandler:
     
     def save_access_token(self, access_token: str = None) -> bool:
         """
-        Save access token to .env file
-        
+        Save access token and creation timestamp to .env file
+
         Args:
             access_token: Token to save (default: current session token)
-        
+
         Returns:
             True if successful
         """
         token_to_save = access_token or self.access_token
-        
+
         if not token_to_save:
             logger.error("No access token to save")
             return False
-        
+
         try:
             env_path = config.BASE_DIR / '.env'
-            
+
             # Read existing .env content
             if env_path.exists():
                 with open(env_path, 'r') as f:
                     lines = f.readlines()
             else:
                 lines = []
-            
+
+            # Get current IST timestamp
+            created_at = datetime.now(IST)
+            timestamp_str = created_at.isoformat()
+
             # Update or add KITE_ACCESS_TOKEN
             token_line = f"KITE_ACCESS_TOKEN={token_to_save}\n"
+            timestamp_line = f"KITE_ACCESS_TOKEN_CREATED_AT={timestamp_str}\n"
+
             token_found = False
-            
+            timestamp_found = False
+
             for i, line in enumerate(lines):
-                if line.startswith('KITE_ACCESS_TOKEN='):
+                if line.startswith('KITE_ACCESS_TOKEN=') and not line.startswith('KITE_ACCESS_TOKEN_CREATED_AT='):
                     lines[i] = token_line
                     token_found = True
-                    break
-            
+                elif line.startswith('KITE_ACCESS_TOKEN_CREATED_AT='):
+                    lines[i] = timestamp_line
+                    timestamp_found = True
+
             if not token_found:
                 lines.append(token_line)
-            
+            if not timestamp_found:
+                lines.append(timestamp_line)
+
             # Write back to .env
             with open(env_path, 'w') as f:
                 f.writelines(lines)
-            
-            logger.info(f"Access token saved to {env_path}")
+
+            # Store timestamp in instance
+            self.token_created_at = created_at
+
+            logger.info(f"Access token and timestamp saved to {env_path}")
+            logger.info(f"Token created at: {timestamp_str}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to save access token: {e}")
             return False
     
     def load_access_token(self) -> Optional[str]:
         """
-        Load access token from .env file
-        
+        Load access token and creation timestamp from .env file
+
         Returns:
             Access token or None
         """
-        token = config.KITE_ACCESS_TOKEN
-        
+        # Read directly from .env file to get latest token and timestamp
+        # (config.KITE_ACCESS_TOKEN is only loaded once at app startup)
+        env_path = config.BASE_DIR / '.env'
+        token = None
+        timestamp_str = None
+
+        if env_path.exists():
+            try:
+                with open(env_path, 'r') as f:
+                    for line in f:
+                        if line.startswith('KITE_ACCESS_TOKEN=') and not line.startswith('KITE_ACCESS_TOKEN_CREATED_AT='):
+                            token = line.split('=', 1)[1].strip()
+                        elif line.startswith('KITE_ACCESS_TOKEN_CREATED_AT='):
+                            timestamp_str = line.split('=', 1)[1].strip()
+            except Exception as e:
+                logger.error(f"Failed to read .env file: {e}")
+
         if token:
             self.access_token = token
             self.kite.set_access_token(token)
-            logger.info("Access token loaded from config")
+
+            # Parse timestamp if available
+            if timestamp_str:
+                try:
+                    self.token_created_at = datetime.fromisoformat(timestamp_str)
+                    logger.info(f"Access token loaded from .env file (created: {timestamp_str})")
+                except ValueError as e:
+                    logger.warning(f"Failed to parse timestamp '{timestamp_str}': {e}")
+                    self.token_created_at = None
+                    logger.info("Access token loaded from .env file (no valid timestamp)")
+            else:
+                self.token_created_at = None
+                logger.info("Access token loaded from .env file (no timestamp)")
+
             return token
-        
-        logger.warning("No access token found in config")
+
+        logger.warning("No access token found in .env file")
         return None
-    
+
+    def get_token_expiry_time(self) -> Optional[datetime]:
+        """
+        Calculate when the access token will expire (6 AM IST next day)
+
+        Returns:
+            Datetime of expiry in IST, or None if no timestamp available
+        """
+        if not self.token_created_at:
+            return None
+
+        # Ensure created_at is in IST
+        created_at_ist = self.token_created_at.astimezone(IST)
+
+        # Calculate 6 AM IST of the next day
+        # If created after 6 AM today, expires at 6 AM tomorrow
+        # If created before 6 AM today, still expires at 6 AM tomorrow (edge case)
+        next_day = created_at_ist.date() + timedelta(days=1)
+        expiry_time = IST.localize(datetime.combine(next_day, datetime.min.time().replace(hour=6)))
+
+        return expiry_time
+
+    def is_token_expired_by_time(self) -> bool:
+        """
+        Check if token is expired based on timestamp (without API call)
+
+        Returns:
+            True if definitely expired, False if might still be valid
+        """
+        expiry_time = self.get_token_expiry_time()
+
+        if not expiry_time:
+            # No timestamp available, can't determine from time alone
+            return False
+
+        # Get current IST time
+        now_ist = datetime.now(IST)
+
+        # Token is expired if current time is past expiry time
+        is_expired = now_ist >= expiry_time
+
+        if is_expired:
+            logger.info(f"Token expired by timestamp: now={now_ist}, expiry={expiry_time}")
+        else:
+            time_remaining = expiry_time - now_ist
+            logger.debug(f"Token valid by timestamp: {time_remaining} remaining until {expiry_time}")
+
+        return is_expired
+
+    def get_time_until_expiry(self) -> Optional[timedelta]:
+        """
+        Get time remaining until token expiry
+
+        Returns:
+            Timedelta until expiry, or None if no timestamp available
+        """
+        expiry_time = self.get_token_expiry_time()
+
+        if not expiry_time:
+            return None
+
+        now_ist = datetime.now(IST)
+        time_remaining = expiry_time - now_ist
+
+        # Return timedelta (can be negative if expired)
+        return time_remaining
+
     def verify_token(self) -> bool:
         """
         Verify if current access token is valid
-        
+        Uses hybrid approach: timestamp-based fast path + API verification
+
         Returns:
             True if token is valid
         """
         if not self.access_token:
             logger.warning("No access token to verify")
             return False
-        
+
+        # FAST PATH: Check if token is definitely expired by timestamp
+        # This avoids unnecessary API calls for expired tokens
+        if self.is_token_expired_by_time():
+            logger.info("Token verification skipped - definitely expired by timestamp (fast path)")
+            return False
+
+        # VERIFICATION PATH: Token might be valid by timestamp, verify with API
+        # This catches early invalidations (e.g., login to Kite Web, manual logout)
         try:
             # Try to get profile (lightweight API call)
             profile = self.kite.profile()
-            logger.info(f"Token verified - User: {profile['user_name']} ({profile['email']})")
+            logger.info(f"Token verified via API - User: {profile['user_name']} ({profile['email']})")
+
+            # Log expiry info if timestamp available
+            expiry_time = self.get_token_expiry_time()
+            if expiry_time:
+                time_remaining = self.get_time_until_expiry()
+                logger.info(f"Token valid until: {expiry_time.strftime('%Y-%m-%d %H:%M:%S %Z')} ({time_remaining})")
+
             return True
-            
+
         except Exception as e:
-            logger.error(f"Token verification failed: {e}")
+            logger.error(f"Token verification failed via API: {e}")
             return False
     
     def complete_login_flow(self, request_token: str) -> bool:
@@ -283,13 +404,55 @@ def verify_authentication() -> bool:
 def get_user_profile() -> Optional[Dict]:
     """
     Get current user profile
-    
+
     Returns:
         Profile dict or None
     """
     handler = AuthHandler()
     handler.load_access_token()
     return handler.get_profile()
+
+
+def get_token_expiry_info() -> Optional[Dict]:
+    """
+    Get token expiry information for UI display
+
+    Returns:
+        Dict with expiry_time, time_remaining, expiry_string, or None
+    """
+    handler = AuthHandler()
+    handler.load_access_token()
+
+    expiry_time = handler.get_token_expiry_time()
+    if not expiry_time:
+        return None
+
+    time_remaining = handler.get_time_until_expiry()
+
+    # Format expiry string for display
+    if time_remaining:
+        total_seconds = int(time_remaining.total_seconds())
+
+        if total_seconds <= 0:
+            expiry_string = "Expired"
+        elif total_seconds < 3600:  # Less than 1 hour
+            minutes = total_seconds // 60
+            expiry_string = f"{minutes}m remaining"
+        elif total_seconds < 86400:  # Less than 1 day
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            expiry_string = f"{hours}h {minutes}m remaining"
+        else:
+            expiry_string = "Valid until 6:00 AM IST"
+    else:
+        expiry_string = "Valid until 6:00 AM IST"
+
+    return {
+        'expiry_time': expiry_time,
+        'time_remaining': time_remaining,
+        'expiry_string': expiry_string,
+        'is_expired': time_remaining.total_seconds() <= 0 if time_remaining else False,
+    }
 
 
 # Interactive login helper
