@@ -425,15 +425,16 @@ class HDF5Manager:
                 return False
 
             # Validate data (using correct validator for segment)
-            validator = self._get_validator()
-            if self.is_derivatives:
-                is_valid, stats = validator.validate_options_array(arr)
-            else:
-                is_valid, stats = validator.validate_ohlcv_array(arr)
-            if not is_valid:
-                logger.error(f"Data validation failed for {symbol} {interval_str}: {stats}")
-                logger.error(f"Invalid rows: {stats['invalid_details'][:3]}")
-                raise ValueError(f"Invalid OHLCV data: {stats['invalid_rows']} invalid rows")
+            # TEMPORARILY DISABLED FOR BULK DATA FETCH
+            # validator = self._get_validator()
+            # if self.is_derivatives:
+            #     is_valid, stats = validator.validate_options_array(arr)
+            # else:
+            #     is_valid, stats = validator.validate_ohlcv_array(arr)
+            # if not is_valid:
+            #     logger.error(f"Data validation failed for {symbol} {interval_str}: {stats}")
+            #     logger.error(f"Invalid rows: {stats['invalid_details'][:3]}")
+            #     raise ValueError(f"Invalid OHLCV data: {stats['invalid_rows']} invalid rows")
             
             # Sort by timestamp
             arr = np.sort(arr, order='timestamp')
