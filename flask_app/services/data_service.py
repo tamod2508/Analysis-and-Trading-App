@@ -3,7 +3,6 @@ Data Service
 Business logic for data management and statistics
 """
 
-import logging
 from pathlib import Path
 from typing import Dict
 import os
@@ -13,8 +12,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from database.hdf5_manager import HDF5Manager
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'database.log')
 
 
 def get_all_database_stats() -> Dict:
@@ -28,6 +28,7 @@ def get_all_database_stats() -> Dict:
     segments = {
         'EQUITY': 'Stock market equities and shares',
         'DERIVATIVES': 'Futures & Options contracts',
+        'FUNDAMENTALS': 'Company fundamental data',
     }
 
     # Get database directory path
@@ -49,29 +50,52 @@ def get_all_database_stats() -> Dict:
             try:
                 size_mb = os.path.getsize(db_path) / (1024**2)
 
-                # Get HDF5 stats
-                mgr = HDF5Manager(segment)
-                stats = mgr.get_database_stats()
+                # Special handling for FUNDAMENTALS database
+                if segment == 'FUNDAMENTALS':
+                    from .fundamentals_service import get_fundamentals_stats
+                    fund_stats = get_fundamentals_stats()
 
-                is_active = stats['total_symbols'] > 0
+                    all_stats[segment] = {
+                        'description': description,
+                        'size_mb': fund_stats['size_mb'],
+                        'total_symbols': fund_stats['total_companies'],
+                        'total_datasets': 0,  # Not applicable for fundamentals
+                        'exchanges': ['NSE', 'BSE'],
+                        'exchange_details': {'NSE': fund_stats['nse_companies'], 'BSE': fund_stats['bse_companies']},
+                        'is_active': fund_stats['is_active'],
+                        'status': fund_stats['status']
+                    }
 
-                all_stats[segment] = {
-                    'description': description,
-                    'size_mb': size_mb,
-                    'total_symbols': stats['total_symbols'],
-                    'total_datasets': stats['total_datasets'],
-                    'exchanges': list(stats['exchanges'].keys()),
-                    'exchange_details': stats['exchanges'],
-                    'is_active': is_active,
-                    'status': 'Active' if is_active else 'Empty'
-                }
+                    total_size_mb += fund_stats['size_mb']
+                    total_symbols += fund_stats['total_companies']
+                    if fund_stats['is_active']:
+                        active_count += 1
+                else:
+                    # Get HDF5 stats for EQUITY and DERIVATIVES
+                    # For EQUITY, use backup file to avoid lock conflicts during fetch
+                    use_backup = (segment == 'EQUITY')
+                    mgr = HDF5Manager(segment, use_backup=use_backup)
+                    stats = mgr.get_database_stats()
 
-                total_size_mb += size_mb
-                total_symbols += stats['total_symbols']
-                total_datasets += stats['total_datasets']
-                all_exchanges.update(stats['exchanges'].keys())
-                if is_active:
-                    active_count += 1
+                    is_active = stats['total_symbols'] > 0
+
+                    all_stats[segment] = {
+                        'description': description,
+                        'size_mb': size_mb,
+                        'total_symbols': stats['total_symbols'],
+                        'total_datasets': stats['total_datasets'],
+                        'exchanges': list(stats['exchanges'].keys()),
+                        'exchange_details': stats['exchanges'],
+                        'is_active': is_active,
+                        'status': 'Active' if is_active else 'Empty'
+                    }
+
+                    total_size_mb += size_mb
+                    total_symbols += stats['total_symbols']
+                    total_datasets += stats['total_datasets']
+                    all_exchanges.update(stats['exchanges'].keys())
+                    if is_active:
+                        active_count += 1
 
             except Exception as e:
                 logger.error(f"Error loading stats for {segment}: {e}")
@@ -121,7 +145,9 @@ def get_segment_stats(segment: str) -> Dict:
         Dict containing segment statistics
     """
     try:
-        mgr = HDF5Manager(segment)
+        # For EQUITY, use backup file to avoid lock conflicts during fetch
+        use_backup = (segment == 'EQUITY')
+        mgr = HDF5Manager(segment, use_backup=use_backup)
         stats = mgr.get_database_stats()
 
         # Get file size

@@ -9,6 +9,9 @@ from flask import Flask
 from flask_login import LoginManager
 
 from .config import get_config
+from utils.logger import get_logger, setup_root_logger
+
+logger = get_logger(__name__, 'flask.log')
 
 
 # Initialize Flask-Login
@@ -100,12 +103,14 @@ def _register_blueprints(app: Flask):
     from .routes.dashboard import dashboard_bp
     from .routes.data import data_bp
     from .routes.data_api import data_api_bp
+    from .routes.fundamentals import fundamentals_bp
 
     # Register blueprints
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(data_bp)
     app.register_blueprint(data_api_bp)
+    app.register_blueprint(fundamentals_bp)
 
     app.logger.info("Blueprints registered")
 

@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}{{ symbol }} - {{ company.general.name }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+
+<div class="fade-in">
+    <!-- Header -->
+    <div style="margin-bottom: 2rem;">
+        <div class="flex" style="justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 1rem;">
+            <div>
+                <h1 style="margin: 0; border: none;">{{ company.general.name }}</h1>
+                <div style="margin-top: 0.5rem;">
+                    <span style="color: var(--color-accent); font-size: 1.25rem; font-weight: 600;">{{ exchange }}:{{ symbol }}</span>
+                    <span class="secondary-text" style="margin-left: 1rem;">{{ company.general.sector }}</span>
+                </div>
+                <div class="secondary-text" style="margin-top: 0.25rem; font-size: 0.875rem;">{{ company.general.industry }}</div>
+            </div>
+            <div>
+                <a href="{{ url_for('fundamentals.browse', exchange=exchange) }}" class="btn btn-secondary">
+                    ← Back to Browse
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Key Highlights -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <h2 style="color: var(--color-accent); margin-bottom: 1.5rem;">Key Highlights</h2>
+        <div class="grid grid-cols-4 gap-2">
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">MARKET CAP</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    {% if company.highlights.market_cap %}
+                        ₹{{ (company.highlights.market_cap / 1000000000) | round(2) }}B
+                    {% else %}
+                        -
+                    {% endif %}
+                </div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">P/E RATIO</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    {{ company.highlights.pe_ratio | round(2) if company.highlights.pe_ratio else '-' }}
+                </div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">ROE</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    {{ (company.highlights.roe * 100) | round(2) if company.highlights.roe else '-' }}%
+                </div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">DIV YIELD</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    {{ (company.highlights.dividend_yield * 100) | round(2) if company.highlights.dividend_yield else '-' }}%
+                </div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">EPS</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    ₹{{ company.highlights.eps | round(2) if company.highlights.eps else '-' }}
+                </div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">BOOK VALUE</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    ₹{{ company.highlights.book_value | round(2) if company.highlights.book_value else '-' }}
+                </div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">PROFIT MARGIN</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    {{ (company.highlights.profit_margin * 100) | round(2) if company.highlights.profit_margin else '-' }}%
+                </div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 1rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">REVENUE TTM</div>
+                <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">
+                    {% if company.highlights.revenue_ttm %}
+                        ₹{{ (company.highlights.revenue_ttm / 1000000000) | round(2) }}B
+                    {% else %}
+                        -
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Company Information -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <h2 style="color: var(--color-accent); margin-bottom: 1.5rem;">Company Information</h2>
+        <div class="grid grid-cols-2 gap-2">
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 0.75rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">ISIN</div>
+                <div style="color: var(--color-text-primary);">{{ company.general.isin if company.general.isin else 'N/A' }}</div>
+            </div>
+
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 0.75rem;">
+                <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">IPO DATE</div>
+                <div style="color: var(--color-text-primary);">{{ company.general.ipo_date if company.general.ipo_date else 'N/A' }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Financial Statements Tabs -->
+    <div class="card">
+        <h2 style="color: var(--color-accent); margin-bottom: 1.5rem;">Financial Statements</h2>
+
+        <!-- Tab Navigation -->
+        <div style="border-bottom: 2px solid var(--color-borders); margin-bottom: 1.5rem;">
+            <div class="flex" style="gap: 0.5rem;">
+                <button class="statement-tab active" data-statement="balance_sheet">Balance Sheet</button>
+                <button class="statement-tab" data-statement="income_statement">Income Statement</button>
+                <button class="statement-tab" data-statement="cash_flow">Cash Flow</button>
+            </div>
+        </div>
+
+        <!-- Period Toggle -->
+        <div style="margin-bottom: 1.5rem;">
+            <div class="flex" style="gap: 0.5rem;">
+                <button class="period-toggle active" data-period="yearly">Yearly</button>
+                <button class="period-toggle" data-period="quarterly">Quarterly</button>
+            </div>
+        </div>
+
+        <!-- Statement Content -->
+        <div id="statement-content">
+            <!-- Content will be loaded dynamically -->
+        </div>
+    </div>
+</div>
+
+<style>
+.statement-tab, .period-toggle {
+    padding: 0.75rem 1.5rem;
+    background-color: var(--color-secondary);
+    border: 1px solid var(--color-borders);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s;
+}
+
+.statement-tab:hover, .period-toggle:hover {
+    background-color: var(--color-primary);
+    color: var(--color-text-primary);
+}
+
+.statement-tab.active, .period-toggle.active {
+    background-color: var(--color-accent);
+    color: var(--color-primary);
+    font-weight: 600;
+    border-color: var(--color-accent);
+}
+</style>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentStatement = 'balance_sheet';
+    let currentPeriod = 'yearly';
+
+    // Tab switching
+    document.querySelectorAll('.statement-tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('.statement-tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            currentStatement = this.dataset.statement;
+            loadStatement();
+        });
+    });
+
+    document.querySelectorAll('.period-toggle').forEach(toggle => {
+        toggle.addEventListener('click', function() {
+            document.querySelectorAll('.period-toggle').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            currentPeriod = this.dataset.period;
+            loadStatement();
+        });
+    });
+
+    // Load statement data
+    function loadStatement() {
+        const key = `${currentStatement}_${currentPeriod}`;
+        const data = {{ company | tojson }};
+
+        if (!data[key] || !data[key].length) {
+            document.getElementById('statement-content').innerHTML = `
+                <div class="text-center" style="padding: 3rem; color: var(--color-text-secondary);">
+                    <p>No ${currentPeriod} ${currentStatement.replace('_', ' ')} data available</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Render table
+        renderStatementTable(data[key]);
+    }
+
+    function renderStatementTable(df) {
+        if (!df || df.length === 0) {
+            document.getElementById('statement-content').innerHTML = '<p class="secondary-text">No data available</p>';
+            return;
+        }
+
+        const columns = Object.keys(df[0]);
+        const dateCol = 'date';
+        const dataCols = columns.filter(c => c !== dateCol);
+
+        // Show all periods, reversed (most recent first)
+        const records = df.slice().reverse();
+
+        let html = '<div style="overflow-x: auto; max-width: 100%;"><table style="min-width: 100%; border-collapse: collapse;">';
+
+        // Header
+        html += '<thead><tr style="border-bottom: 2px solid var(--color-accent);">';
+        html += '<th style="padding: 0.75rem; text-align: left; color: var(--color-accent); font-weight: 600; position: sticky; left: 0; background-color: var(--color-secondary); z-index: 1;">Item</th>';
+        records.forEach(record => {
+            html += `<th style="padding: 0.75rem; text-align: right; color: var(--color-accent); font-weight: 600;">${record[dateCol]}</th>`;
+        });
+        html += '</tr></thead>';
+
+        // Body - only show rows with at least some data
+        html += '<tbody>';
+        dataCols.forEach(col => {
+            // Check if this row has any non-zero values across all periods
+            const hasData = records.some(record => {
+                const value = record[col];
+                return value !== null && value !== undefined && Math.abs(value) >= 0.01;
+            });
+
+            // Skip this row if all values are zero/null
+            if (!hasData) {
+                return;
+            }
+
+            html += '<tr style="border-bottom: 1px solid var(--color-borders);">';
+            html += `<td style="padding: 0.75rem; color: var(--color-text-primary); font-weight: 500; position: sticky; left: 0; background-color: var(--color-secondary); z-index: 1;">${formatColumnName(col)}</td>`;
+            records.forEach(record => {
+                const value = record[col];
+                html += `<td style="padding: 0.75rem; text-align: right; color: var(--color-text-primary);">${formatValue(value)}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+
+        document.getElementById('statement-content').innerHTML = html;
+    }
+
+    function formatColumnName(name) {
+        return name.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    }
+
+    function formatValue(value) {
+        if (value === null || value === undefined || value === 0) return '-';
+        if (typeof value === 'number') {
+            if (Math.abs(value) >= 1e9) return `₹${(value / 1e9).toFixed(2)}B`;
+            if (Math.abs(value) >= 1e6) return `₹${(value / 1e6).toFixed(2)}M`;
+            if (Math.abs(value) >= 1e3) return `₹${(value / 1e3).toFixed(2)}K`;
+            return `₹${value.toFixed(2)}`;
+        }
+        return value;
+    }
+
+    // Load initial statement
+    loadStatement();
+</script>
+{% endblock %}

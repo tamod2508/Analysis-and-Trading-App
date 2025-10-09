@@ -46,6 +46,7 @@
                         Analytics ▾
                     </span>
                     <div class="dropdown-menu">
+                        <a href="{{ url_for('data.analysis') }}" class="dropdown-item">Analysis Dashboard</a>
                         <a href="#" class="dropdown-item">Equity</a>
                         <a href="#" class="dropdown-item">Futures</a>
                         <a href="#" class="dropdown-item">Options</a>
@@ -53,7 +54,7 @@
                 </li>
 
                 <li>
-                    <a href="#" class="nav-link">Financials</a>
+                    <a href="{{ url_for('fundamentals.index') }}" class="nav-link {% if request.endpoint and request.endpoint.startswith('fundamentals.') %}active{% endif %}">Fundamentals</a>
                 </li>
 
                 <li>
@@ -69,17 +70,12 @@
         <!-- Right section: Auth Status -->
         <div>
             {% if current_user.is_authenticated %}
-                <div class="flex" style="align-items: center; gap: 0.75rem;">
-                    <div class="status-badge authenticated">
-                        <span class="status-indicator status-online"></span>
-                        {{ current_user.user_name }}
-                        {% if current_user.expiry_string %}
-                         • {{ current_user.expiry_string }}
-                        {% endif %}
-                    </div>
-                    <a href="{{ url_for('auth.logout') }}" class="btn btn-primary" style="padding: 0.4rem 1rem; font-size: 0.85rem;">
-                        Logout
-                    </a>
+                <div class="status-badge authenticated">
+                    <span class="status-indicator status-online"></span>
+                    {{ current_user.user_name }}
+                    {% if current_user.expiry_string %}
+                     • {{ current_user.expiry_string }}
+                    {% endif %}
                 </div>
             {% else %}
                 <div class="status-badge not-authenticated">

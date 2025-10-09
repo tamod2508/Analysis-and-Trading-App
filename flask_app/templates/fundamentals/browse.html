@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Companies - {{ app_name }}{% endblock %}
+
+{% block content %}
+
+<div class="fade-in">
+    <!-- Header -->
+    <div style="margin-bottom: 2rem;">
+        <h1 style="border-bottom: 2px solid var(--color-accent); padding-bottom: 0.75rem;">Browse Companies</h1>
+        <p class="secondary-text" style="margin-top: 0.5rem;">
+            Showing {{ companies | length }} NSE companies
+        </p>
+    </div>
+
+    <!-- Search Filter -->
+    <div class="card">
+        <h2 style="color: var(--color-accent); margin-bottom: 1.5rem;">Search Companies</h2>
+        <p class="secondary-text" style="margin-bottom: 1.5rem;">Type a company symbol or name to search from {{ companies | length }} NSE companies</p>
+
+        <div style="position: relative; max-width: 600px;">
+            <label style="color: var(--color-text-secondary); font-size: 0.875rem; display: block; margin-bottom: 0.5rem;">Search Symbol or Company Name</label>
+            <input type="text" id="search-input" placeholder="Type to search (e.g., RELIANCE, TCS, INFY)..." class="form-input" style="width: 100%; padding: 0.75rem; background-color: var(--color-secondary); border: 1px solid var(--color-borders); color: var(--color-text-primary); border-radius: var(--radius-sm); font-size: 1rem;" autocomplete="off">
+
+            <!-- Autocomplete dropdown -->
+            <div id="autocomplete-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background-color: var(--color-secondary); border: 1px solid var(--color-accent); border-top: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm); max-height: 400px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);"></div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Autocomplete and search functionality
+    const searchInput = document.getElementById('search-input');
+    const searchBtn = document.getElementById('search-btn');
+    const dropdown = document.getElementById('autocomplete-dropdown');
+    let debounceTimer;
+
+    // Autocomplete on input
+    searchInput.addEventListener('input', function(e) {
+        const query = e.target.value.trim();
+
+        // Clear previous timer
+        clearTimeout(debounceTimer);
+
+        if (query.length < 2) {
+            dropdown.style.display = 'none';
+            return;
+        }
+
+        // Debounce API calls (wait 300ms after user stops typing)
+        debounceTimer = setTimeout(() => {
+            fetchAutocomplete(query);
+        }, 300);
+    });
+
+    // Search on button click
+    searchBtn.addEventListener('click', performSearch);
+
+    // Search on Enter key
+    searchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            dropdown.style.display = 'none';
+            performSearch();
+        }
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+        if (e.target !== searchInput && e.target !== dropdown) {
+            dropdown.style.display = 'none';
+        }
+    });
+
+    async function fetchAutocomplete(query) {
+        try {
+            const response = await fetch(`{{ url_for('fundamentals.search') }}?q=${encodeURIComponent(query)}&exchange=NSE&limit=10`);
+            const results = await response.json();
+
+            if (results.length > 0) {
+                displayAutocomplete(results);
+            } else {
+                dropdown.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Autocomplete error:', error);
+            dropdown.style.display = 'none';
+        }
+    }
+
+    function displayAutocomplete(results) {
+        dropdown.innerHTML = '';
+
+        results.forEach(company => {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding: 0.75rem; cursor: pointer; border-bottom: 1px solid var(--color-borders); transition: background-color 0.2s;';
+
+            item.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="color: var(--color-accent); font-weight: 600;">${company.symbol}</div>
+                        <div style="color: var(--color-text-secondary); font-size: 0.75rem; margin-top: 0.25rem;">${company.name}</div>
+                        <div style="color: var(--color-text-secondary); font-size: 0.7rem; margin-top: 0.1rem;">${company.sector} • ${company.industry}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="color: var(--color-text-primary); font-size: 0.875rem;">₹${(company.market_cap / 1e9).toFixed(2)}B</div>
+                    </div>
+                </div>
+            `;
+
+            // Hover effect
+            item.addEventListener('mouseenter', function() {
+                this.style.backgroundColor = 'var(--color-primary)';
+            });
+            item.addEventListener('mouseleave', function() {
+                this.style.backgroundColor = 'transparent';
+            });
+
+            // Click to navigate
+            item.addEventListener('click', function() {
+                window.location.href = `{{ url_for('fundamentals.view_company', exchange='NSE', symbol='') }}${company.symbol}`;
+            });
+
+            dropdown.appendChild(item);
+        });
+
+        dropdown.style.display = 'block';
+    }
+
+    function performSearch() {
+        const query = searchInput.value.trim();
+
+        if (query.length < 2) {
+            alert('Please enter at least 2 characters to search');
+            return;
+        }
+
+        // Redirect to same page with search query (NSE only)
+        window.location.href = `{{ url_for('fundamentals.browse') }}?search=${encodeURIComponent(query)}`;
+    }
+</script>
+{% endblock %}

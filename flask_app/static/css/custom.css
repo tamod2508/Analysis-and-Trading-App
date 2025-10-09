@@ -109,9 +109,9 @@ a:hover {
 /* ==================== Layout ==================== */
 
 .container {
-    max-width: 1400px;
+    max-width: 100%;
     margin: 0 auto;
-    padding: var(--spacing-xl);
+    padding: var(--spacing-xl) 4rem;
 }
 
 .content-wrapper {

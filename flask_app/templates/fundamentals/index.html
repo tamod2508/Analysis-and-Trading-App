@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Fundamentals - {{ app_name }}{% endblock %}
+
+{% block content %}
+
+<div class="fade-in">
+    <!-- Header -->
+    <div style="margin: 2rem 0 3rem 0;">
+        <h1 style="border: none;">Company Fundamentals</h1>
+        <p class="secondary-text" style="font-size: 1.1rem; margin-top: 0.75rem;">
+            Financial statements and metrics for {{ stats.nse_companies | format_number }} NSE companies
+        </p>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="flex" style="gap: 1.5rem; margin-bottom: 3rem; flex-wrap: wrap;">
+        <div class="metric-card" style="min-width: 180px;">
+            <div class="metric-label">Total Companies</div>
+            <div class="metric-value">{{ stats.total_companies | format_number }}</div>
+            <div class="metric-info">NSE: {{ stats.nse_companies | format_number }}</div>
+        </div>
+
+        <div class="metric-card" style="min-width: 180px;">
+            <div class="metric-label">Database Size</div>
+            <div class="metric-value">{{ stats.size_mb | format_size }}</div>
+            <div class="metric-info">Version {{ stats.database_version }}</div>
+        </div>
+
+        <div class="metric-card" style="min-width: 180px;">
+            <div class="metric-label">Status</div>
+            <div class="metric-value" style="font-size: 1.25rem;">
+                {% if stats.is_active %}
+                    <span style="color: var(--color-success);">● Active</span>
+                {% else %}
+                    <span style="color: var(--color-loss);">● {{ stats.status }}</span>
+                {% endif %}
+            </div>
+            <div class="metric-info">{{ stats.description }}</div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card" style="margin-bottom: 3rem;">
+        <h2 style="color: var(--color-accent); margin-bottom: 1.5rem;">Quick Actions</h2>
+        <div class="flex" style="gap: 1rem; flex-wrap: wrap;">
+            <a href="{{ url_for('fundamentals.browse') }}" class="btn btn-primary">
+                Browse Companies
+            </a>
+        </div>
+    </div>
+
+    <!-- Sector Distribution -->
+    {% if sectors %}
+    <div class="card">
+        <h2 style="color: var(--color-accent); margin-bottom: 1.5rem;">Sector Distribution</h2>
+        <div class="grid grid-cols-2 gap-2">
+            {% set sector_list = sectors.items() | list %}
+            {% for sector, count in sector_list[:12] %}
+            <div style="background-color: var(--color-primary); border: 1px solid var(--color-borders); border-radius: var(--radius-sm); padding: 0.75rem;">
+                <div class="flex" style="justify-content: space-between; align-items: center;">
+                    <div class="secondary-text" style="font-size: 0.875rem;">{{ sector }}</div>
+                    <div style="color: var(--color-text-primary); font-size: 1.1rem; font-weight: 600;">{{ count }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
