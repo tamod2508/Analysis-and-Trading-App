@@ -3,12 +3,15 @@ Flask Authentication Service
 Handles Kite Connect OAuth authentication and session management
 """
 
-import logging
+import os
+from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict
 from flask_login import UserMixin
 from kiteconnect import KiteConnect
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'authentication.log')
 
 
 class User(UserMixin):
@@ -211,14 +214,57 @@ def load_user(user_id: str) -> Optional[User]:
     return None
 
 
-def save_user(user: User):
+def save_user(user: User, access_token: str = None):
     """
-    Save user to storage
+    Save user to storage and optionally update .env with access token
 
     Args:
         user: User object
+        access_token: Access token to save to .env (optional)
     """
     _users[user.id] = user
+
+    # Save access token to .env file if provided
+    if access_token:
+        try:
+            env_path = Path(__file__).parent.parent.parent / '.env'
+
+            if env_path.exists():
+                # Read existing .env content
+                with open(env_path, 'r') as f:
+                    lines = f.readlines()
+
+                # Update or add KITE_ACCESS_TOKEN
+                token_updated = False
+                timestamp_updated = False
+                new_lines = []
+
+                for line in lines:
+                    if line.startswith('KITE_ACCESS_TOKEN='):
+                        new_lines.append(f'KITE_ACCESS_TOKEN={access_token}\n')
+                        token_updated = True
+                    elif line.startswith('KITE_ACCESS_TOKEN_CREATED_AT='):
+                        new_lines.append(f'KITE_ACCESS_TOKEN_CREATED_AT={datetime.now().isoformat()}\n')
+                        timestamp_updated = True
+                    else:
+                        new_lines.append(line)
+
+                # Add if not found
+                if not token_updated:
+                    new_lines.append(f'KITE_ACCESS_TOKEN={access_token}\n')
+                if not timestamp_updated:
+                    new_lines.append(f'KITE_ACCESS_TOKEN_CREATED_AT={datetime.now().isoformat()}\n')
+
+                # Write back to .env
+                with open(env_path, 'w') as f:
+                    f.writelines(new_lines)
+
+                logger.info(f"Access token saved to .env file for user {user.id}")
+            else:
+                logger.warning(f".env file not found at {env_path}")
+
+        except Exception as e:
+            logger.error(f"Error saving access token to .env: {e}")
 
 
 def get_auth_service(api_key: str, api_secret: str, redirect_uri: str) -> AuthService:

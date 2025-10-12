@@ -6,7 +6,6 @@ Handles storage and retrieval of fundamental data in FUNDAMENTALS.h5
 import h5py
 import hdf5plugin  # Register blosc and other compression filters
 import numpy as np
-import logging
 from pathlib import Path
 from typing import Dict, Optional, List
 from datetime import datetime
@@ -20,8 +19,9 @@ from database.fundamentals_schema import (
     CompanyHighlights,
     get_schema_for_dataset,
 )
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'fundamentals.log')
 
 
 class FundamentalsManager:

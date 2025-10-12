@@ -3,7 +3,6 @@ Flask Data Fetcher Service
 Provides Flask-compatible interface to KiteClient for fetching historical data
 """
 
-import logging
 import numpy as np
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple, Any
@@ -14,8 +13,9 @@ from api.kite_client import KiteClient, KiteAPIError, KiteAuthenticationError
 from config.constants import Exchange, Interval, Segment
 from database.hdf5_manager import HDF5Manager
 from database.instruments_db import InstrumentsDB
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'fetcher.log')
 
 
 def convert_numpy_types(obj: Any) -> Any:

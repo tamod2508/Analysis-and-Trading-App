@@ -12,7 +12,6 @@ from typing import Optional, List, Dict, Tuple, Union
 from contextlib import contextmanager
 import shutil
 import gc
-import logging
 import hashlib
 
 from config import (
@@ -43,8 +42,9 @@ from database.schema import (
     ohlcv_array_to_dict,
     options_array_to_dict,
 )
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'file_manager.log')
 
 # Database version management
 CURRENT_DB_VERSION = '1.0'
@@ -56,15 +56,26 @@ class HDF5Manager:
     HDF5 Database Manager 
     """
     
-    def __init__(self, segment: str = 'EQUITY'):
+    def __init__(self, segment: str = 'EQUITY', use_backup: bool = False):
         """
         Initialize HDF5 Manager for a specific segment
 
         Args:
             segment: Market segment (EQUITY, DERIVATIVES)
+            use_backup: If True, use backup file for read-only operations (for analysis during fetch)
         """
         self.segment = segment.upper()
-        self.db_path = config.get_hdf5_path(self.segment)
+        self.use_backup = use_backup
+
+        # Get the appropriate database path
+        if use_backup:
+            # Use backup file for analysis (avoids lock conflicts during fetch)
+            base_path = config.get_hdf5_path(self.segment)
+            self.db_path = base_path.parent / f"{self.segment}_backup.h5"
+        else:
+            # Use main database file
+            self.db_path = config.get_hdf5_path(self.segment)
+
         self.structure = HDF5Structure()
 
         # Determine schema type based on segment
@@ -88,7 +99,8 @@ class HDF5Manager:
                 # Check version and migrate if needed
                 self._check_and_migrate_version()
 
-        logger.info(f"HDF5Manager initialized: {self.db_path} (Segment: {self.segment})")
+        mode_str = "BACKUP (read-only for analysis)" if use_backup else "MAIN (read/write)"
+        logger.info(f"HDF5Manager initialized: {self.db_path} (Segment: {self.segment}, Mode: {mode_str})")
         logger.info(f"Schema: {'OPTIONS (with OI)' if self.is_derivatives else 'EQUITY (no OI)'}")
         logger.info(f"Compression: {config.HDF5_COMPRESSION} (level {config.HDF5_COMPRESSION_LEVEL})")
     
@@ -987,20 +999,60 @@ class HDF5Manager:
         """Remove old backups beyond MAX_BACKUPS limit"""
         if not config.AUTO_BACKUP:
             return
-        
+
         try:
             # Find all backups for this segment
             pattern = f"{self.segment}_backup_*.h5"
             backups = sorted(config.BACKUP_DIR.glob(pattern), key=lambda p: p.stat().st_mtime)
-            
+
             # Remove oldest backups
             while len(backups) > config.MAX_BACKUPS:
                 oldest = backups.pop(0)
                 oldest.unlink()
                 logger.info(f"Removed old backup: {oldest.name}")
-                
+
         except Exception as e:
             logger.warning(f"Failed to cleanup old backups: {e}")
+
+    def create_analysis_backup(self) -> Path:
+        """
+        Create/update the analysis backup file (used for concurrent read access during fetch)
+
+        This creates a fixed-name backup file ({SEGMENT}_backup.h5) that the analysis/dashboard
+        uses for reading data while fetch operations write to the main database.
+
+        Called:
+        - On authentication (creates initial backup for the session)
+        - On manual refresh (user clicks "Refresh Data" button in dashboard)
+
+        Returns:
+            Path to the backup file
+        """
+        # Get backup file path
+        backup_path = self.db_path.parent / f"{self.segment}_backup.h5"
+
+        try:
+            # Close any open handles
+            gc.collect()
+
+            # Copy main database to backup
+            logger.info(f"Creating analysis backup: {backup_path}")
+            shutil.copy2(self.db_path, backup_path)
+
+            # Verify backup
+            with h5py.File(backup_path, 'r') as f:
+                f.attrs.get('db_version')  # Simple read check
+
+            size_mb = round(backup_path.stat().st_size / (1024**2), 2)
+            logger.info(f"✅ Analysis backup created: {backup_path} ({size_mb} MB)")
+
+            return backup_path
+
+        except Exception as e:
+            logger.error(f"❌ Analysis backup failed: {e}")
+            if backup_path.exists():
+                backup_path.unlink()
+            raise
     
     def optimize_database(self):
         """

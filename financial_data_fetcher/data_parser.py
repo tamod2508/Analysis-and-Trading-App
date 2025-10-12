@@ -1,6 +1,6 @@
 """
 EODHD Data Parser
-Converts EODHD JSON responses into structured NumPy arrays for HDF5 storage
+Converts EODHD JSON responses into structured NumPy arrays
 """
 
 import numpy as np

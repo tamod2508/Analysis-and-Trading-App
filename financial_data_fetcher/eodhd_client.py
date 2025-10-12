@@ -7,6 +7,9 @@ import requests
 import time
 import logging
 import json
+import gzip
+import tempfile
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
@@ -43,6 +46,11 @@ class EODHDClient:
 
         logger.info(f"EODHD Client initialized")
         logger.info(f"Cache directory: {self.cache_dir}")
+        # Cache compression settings
+        # When True, cache files will be written as compressed .json.gz files.
+        self.compress_cache = True
+        # Default gzip compression level (1-9). Level 6 is balanced for speed/size.
+        self.compresslevel = 6
 
     def get_exchange_symbols(self, exchange: str = 'NSE') -> List[Dict]:
         """
@@ -59,13 +67,16 @@ class EODHDClient:
 
         cache_file = self.cache_dir / f"{exchange}_symbols.json"
 
-        # Check cache (valid for 1 day)
-        if cache_file.exists():
-            age_hours = (time.time() - cache_file.stat().st_mtime) / 3600
+        # Check cache (valid for 1 day). Prefer compressed cache if present.
+        cached = self._read_cache_json(cache_file)
+        if cached is not None:
+            # determine which path exists for mtime check
+            gz_path = cache_file.with_name(cache_file.name + '.gz')
+            file_for_mtime = gz_path if gz_path.exists() else cache_file
+            age_hours = (time.time() - file_for_mtime.stat().st_mtime) / 3600
             if age_hours < 24:
                 logger.info(f"Using cached symbols for {exchange}")
-                with open(cache_file, 'r') as f:
-                    return json.load(f)
+                return cached
 
         logger.info(f"Fetching symbols from {exchange}...")
 
@@ -75,9 +86,8 @@ class EODHDClient:
 
             symbols = response.json()
 
-            # Cache the result
-            with open(cache_file, 'w') as f:
-                json.dump(symbols, f)
+            # Cache the result (atomic + optional gzip)
+            self._write_cache_json(cache_file, symbols)
 
             logger.info(f"✅ Fetched {len(symbols)} symbols from {exchange}")
 
@@ -93,7 +103,7 @@ class EODHDClient:
         self,
         symbol: str,
         exchange: str = 'NSE',
-        use_cache: bool = True
+        use_cache: bool = False
     ) -> Optional[Dict]:
         """
         Get fundamental data for a symbol
@@ -113,12 +123,15 @@ class EODHDClient:
         cache_file = self.cache_dir / f"{ticker}.json"
 
         # Check cache (valid for 1 week)
-        if use_cache and cache_file.exists():
-            age_days = (time.time() - cache_file.stat().st_mtime) / 86400
-            if age_days < 7:
-                logger.debug(f"Using cached data for {ticker}")
-                with open(cache_file, 'r') as f:
-                    return json.load(f)
+        if use_cache:
+            cached = self._read_cache_json(cache_file)
+            if cached is not None:
+                gz_path = cache_file.with_name(cache_file.name + '.gz')
+                file_for_mtime = gz_path if gz_path.exists() else cache_file
+                age_days = (time.time() - file_for_mtime.stat().st_mtime) / 86400
+                if age_days < 7:
+                    logger.debug(f"Using cached data for {ticker}")
+                    return cached
 
         logger.info(f"Fetching fundamental data for {ticker}...")
 
@@ -133,9 +146,8 @@ class EODHDClient:
                 logger.warning(f"⚠️ No fundamental data for {ticker}")
                 return None
 
-            # Cache the result
-            with open(cache_file, 'w') as f:
-                json.dump(data, f, indent=2)
+            # Cache the result (atomic + optional gzip)
+            self._write_cache_json(cache_file, data)
 
             logger.info(f"✅ Fetched fundamental data for {ticker}")
 
@@ -227,16 +239,12 @@ class EODHDClient:
         # Final summary
         elapsed = time.time() - start_time
 
-        logger.info(f"\n{'='*70}")
         logger.info(f"BULK DOWNLOAD COMPLETE")
-        logger.info(f"{'='*70}")
         logger.info(f"Total Companies: {total}")
         logger.info(f"✅ Success: {len(results['success'])}")
         logger.info(f"⚠️ Not Found: {len(results['not_found'])}")
         logger.info(f"❌ Errors: {len(results['errors'])}")
         logger.info(f"Time Elapsed: {elapsed/60:.1f} minutes")
-        logger.info(f"Average Rate: {total/elapsed:.1f} companies/sec")
-        logger.info(f"{'='*70}")
 
         return results
 
@@ -295,6 +303,74 @@ class EODHDClient:
         logger.info(f"{'='*70}")
 
         return stats
+
+    # ------------------------------------------------------------------
+    # Cache helper methods for gzip read/write
+    # ------------------------------------------------------------------
+    def _read_cache_json(self, cache_file: Path) -> Optional[Dict]:
+        """
+        Read cached JSON data. Prefer compressed .json.gz if present.
+        Returns the parsed JSON object or None if cache not present.
+        """
+        try:
+            gz_path = cache_file.with_name(cache_file.name + '.gz')
+            if gz_path.exists():
+                with gzip.open(gz_path, 'rt', encoding='utf-8') as f:
+                    return json.load(f)
+
+            if cache_file.exists():
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+
+            return None
+        except Exception as e:
+            # If reading cache fails, log and treat as cache miss
+            logger.debug(f"Failed to read cache {cache_file}: {e}")
+            return None
+
+    def _write_cache_json(self, cache_file: Path, data: Dict):
+        """
+        Atomically write JSON to cache. If self.compress_cache is True,
+        writes a compressed file named '<name>.json.gz' and removes any
+        plain .json file if present.
+        """
+        # Ensure parent dir exists
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.compress_cache:
+            gz_path = cache_file.with_name(cache_file.name + '.gz')
+            # Write to temp file in same directory, then replace
+            fd, tmp_path = tempfile.mkstemp(dir=str(gz_path.parent), prefix=gz_path.name + '.')
+            os.close(fd)
+            try:
+                with gzip.open(tmp_path, 'wt', encoding='utf-8', compresslevel=self.compresslevel) as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, gz_path)
+                # Try to remove plain json if it exists
+                if cache_file.exists():
+                    try:
+                        os.remove(cache_file)
+                    except Exception:
+                        pass
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+        else:
+            fd, tmp_path = tempfile.mkstemp(dir=str(cache_file.parent), prefix=cache_file.name + '.')
+            os.close(fd)
+            try:
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, cache_file)
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
 
 
 if __name__ == '__main__':

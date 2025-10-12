@@ -3,14 +3,14 @@ Data Fetching API Routes
 RESTful endpoints for fetching historical market data
 """
 
-import logging
 from datetime import datetime
 from flask import Blueprint, request, jsonify, session, current_app
 from flask_login import login_required
 
 from ..services.data_fetcher import create_data_fetcher
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'flask.log')
 
 # Create blueprint
 data_api_bp = Blueprint('data_api', __name__, url_prefix='/api/data')

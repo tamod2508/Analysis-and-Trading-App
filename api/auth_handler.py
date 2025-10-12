@@ -3,15 +3,15 @@ Kite Connect Authentication Handler
 Manages OAuth2 login flow and token persistence
 """
 
-import logging
 from typing import Optional, Dict
 from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 
 from config import config
 from config.constants import IST
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'authentication.log')
 
 
 class AuthHandler:

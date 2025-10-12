@@ -420,3 +420,4 @@ def check_symbol_consistency(symbol: str, exchange: str = 'NSE', interval: str =
     """
     adjuster = DataAdjuster()
     return adjuster.check_consistency(exchange, symbol, interval)
+    

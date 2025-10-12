@@ -1,15 +1,15 @@
 """
 Authentication Routes
-Handles Kite Connect OAuth login and logout
+Handles Kite Connect OAuth login
 """
 
-import logging
 from flask import Blueprint, request, redirect, url_for, session, flash, current_app
-from flask_login import login_user, logout_user, current_user
+from flask_login import login_user, current_user
 
 from ..services.auth_service import get_auth_service, save_user
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'flask.log')
 
 # Create blueprint
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -72,8 +72,8 @@ def callback():
         # Create user object
         user = auth_service.create_user(session_data, profile)
 
-        # Save user
-        save_user(user)
+        # Save user and access token to .env
+        save_user(user, access_token=access_token)
 
         # Store access token in session
         session['access_token'] = access_token
@@ -84,7 +84,22 @@ def callback():
         login_user(user, remember=True)
 
         logger.info(f"User logged in: {user.id}")
-        flash(f'Welcome, {user.user_name or user.user_id}!', 'success')
+
+        # Create analysis backup for this session (protects data + allows concurrent access)
+        try:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+            from database.hdf5_manager import HDF5Manager
+
+            # Create backup for EQUITY segment (main data)
+            manager = HDF5Manager('EQUITY')
+            backup_path = manager.create_analysis_backup()
+            logger.info(f"Session backup created: {backup_path}")
+            flash(f'Welcome, {user.user_name or user.user_id}! Analysis backup created.', 'success')
+        except Exception as e:
+            logger.warning(f"Failed to create session backup: {e}")
+            flash(f'Welcome, {user.user_name or user.user_id}!', 'success')
 
         # Redirect to dashboard
         return redirect(url_for('dashboard.home'))
@@ -93,20 +108,3 @@ def callback():
         logger.error(f"Error during authentication: {e}", exc_info=True)
         flash(f'Authentication failed: {str(e)}', 'error')
         return redirect(url_for('auth.login'))
-
-
-@auth_bp.route('/logout')
-def logout():
-    """
-    Log out user and clear session
-    """
-    # Log out user (Flask-Login)
-    logout_user()
-
-    # Clear session
-    session.clear()
-
-    logger.info("User logged out")
-    flash('You have been logged out.', 'info')
-
-    return redirect(url_for('auth.login'))

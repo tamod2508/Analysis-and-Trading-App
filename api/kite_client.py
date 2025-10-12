@@ -4,7 +4,6 @@ Handles rate limiting, retries, and data normalization
 """
 
 import time
-import logging
 import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
@@ -16,8 +15,9 @@ from config.constants import Exchange, Interval, API_LIMITS, Segment
 from database.data_validator import DataValidator
 from database.hdf5_manager import HDF5Manager
 from database.instruments_db import InstrumentsDB
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'fetcher.log')
 
 
 class KiteAPIError(Exception):
@@ -44,186 +44,98 @@ class KiteClient:
     """
     Kite Connect API client for fetching historical data
     Handles rate limiting, retries, and data validation
-
-    Thread Safety:
-        Rate limiting is thread-safe via a lock. However, for optimal performance
-        in multi-threaded environments, consider using one KiteClient instance
-        per thread to avoid lock contention and maintain better throughput.
     """
-
+    
     def __init__(self, api_key: str = None, access_token: str = None):
         """
         Initialize Kite client
-
+        
         Args:
             api_key: Kite API key (default: from config)
             access_token: Kite access token (default: from config)
         """
         self.api_key = api_key or config.KITE_API_KEY
         self.access_token = access_token or config.KITE_ACCESS_TOKEN
-
+        
         if not self.api_key:
             raise ValueError("API key not configured")
-
+        
         # Initialize KiteConnect
         self.kite = KiteConnect(api_key=self.api_key)
-
+        
         if self.access_token:
             self.kite.set_access_token(self.access_token)
-
-        # Rate limiting (thread-safe)
-        self._rate_limit_lock = threading.Lock()
-        self.last_request_time = time.time()  # Initialize to current time
+        
+        # Rate limiting
+        self.last_request_time = time.time()
         self.min_request_interval = (1.0 / config.API_RATE_LIMIT) + config.API_RATE_SAFETY_MARGIN
 
         # Validator and database
         self.validator = DataValidator()
         self.db = HDF5Manager()
-        self.instruments_db = InstrumentsDB()  # Persistent instruments storage
+        self.instruments_db = InstrumentsDB()
 
         actual_rate = 1.0 / self.min_request_interval
         logger.info(f"KiteClient initialized (rate limit: {config.API_RATE_LIMIT} req/sec with {config.API_RATE_SAFETY_MARGIN*1000:.0f}ms safety margin, actual: {actual_rate:.2f} req/sec, interval: {self.min_request_interval:.3f}s)")
     
     def _rate_limit_wait(self):
-        """
-        Enforce rate limiting between API calls (thread-safe)
-
-        Thread Safety:
-            Uses a lock to ensure concurrent calls don't violate rate limits.
-            Only one thread can enter the critical section at a time.
-        """
-        with self._rate_limit_lock:
-            elapsed = time.time() - self.last_request_time
-            if elapsed < self.min_request_interval:
-                wait_time = self.min_request_interval - elapsed
-                time.sleep(wait_time)
-            self.last_request_time = time.time()
+        """Enforce rate limiting between API calls"""
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.min_request_interval:
+            wait_time = self.min_request_interval - elapsed
+            time.sleep(wait_time)
+        self.last_request_time = time.time()
     
-    def _classify_error(self, exception: Exception) -> type[KiteAPIError]:
-        """
-        Classify API errors into structured exception types
-
-        This provides more robust error classification than string matching alone.
-        Checks exception type first, then falls back to error message parsing.
-
-        Args:
-            exception: The caught exception
-
-        Returns:
-            Appropriate KiteAPIError subclass type
-        """
-        error_msg = str(exception).lower()
-        exception_type = type(exception).__name__
-
-        # Try to get HTTP status code from exception attributes
-        status_code = getattr(exception, 'code', None) or getattr(exception, 'status_code', None)
-
-        # Classification by HTTP status code (most reliable)
-        if status_code:
-            if status_code == 429:
-                return KiteRateLimitError
-            elif status_code in (401, 403):
-                return KiteAuthenticationError
-            elif 500 <= status_code < 600:
-                return KiteServerError
-
-        # Classification by exception type name (second most reliable)
-        if 'tokenerror' in exception_type.lower() or 'autherror' in exception_type.lower():
-            return KiteAuthenticationError
-
-        # Classification by error message (least reliable, but necessary fallback)
-        # Rate limit errors
-        if any(pattern in error_msg for pattern in ['too many requests', '429', 'rate limit']):
-            return KiteRateLimitError
-
-        # Authentication errors
-        if any(pattern in error_msg for pattern in [
-            'invalid token',
-            'token expired',
-            'token invalid',
-            'unauthorized',
-            '401',
-            '403'
-        ]):
-            return KiteAuthenticationError
-
-        # Server errors
-        if any(pattern in error_msg for pattern in ['500', '502', '503', '504', 'server error']):
-            return KiteServerError
-
-        # Default to base exception
-        return KiteAPIError
-
     def _make_api_call(self, func, *args, **kwargs):
         """
         Make API call with rate limiting and retry logic
-
+        
         Args:
             func: API function to call
             *args, **kwargs: Arguments to pass to function
-
+        
         Returns:
             API response
-
-        Raises:
-            KiteAuthenticationError: For authentication/token errors (non-retryable)
-            KiteRateLimitError: For rate limit errors (after exhausting retries)
-            KiteServerError: For server errors (after exhausting retries)
-            KiteAPIError: For other API errors (after exhausting retries)
         """
-        last_exception = None
-
         for attempt in range(config.MAX_RETRIES):
             try:
                 self._rate_limit_wait()
                 result = func(*args, **kwargs)
                 return result
-
+                
             except Exception as e:
-                last_exception = e
-                error_class = self._classify_error(e)
                 error_msg = str(e)
-
-                # Authentication errors - don't retry
-                if error_class == KiteAuthenticationError:
-                    logger.error("Authentication error - please re-authenticate")
-                    raise KiteAuthenticationError(f"Authentication failed: {error_msg}") from e
-
-                # Rate limit errors - retry with backoff
-                if error_class == KiteRateLimitError:
+                
+                # Check if it's a rate limit error
+                if "Too many requests" in error_msg or "429" in error_msg:
                     wait_time = config.RETRY_DELAY * (config.RETRY_BACKOFF ** attempt)
-                    logger.warning(
-                        f"Rate limit hit, waiting {wait_time:.1f}s before retry "
-                        f"{attempt+1}/{config.MAX_RETRIES}"
-                    )
+                    logger.warning(f"Rate limit hit, waiting {wait_time}s before retry {attempt+1}/{config.MAX_RETRIES}")
                     time.sleep(wait_time)
                     continue
-
-                # Server errors - retry with backoff
-                if error_class == KiteServerError:
+                
+                # Check if it's a server error (retry)
+                elif "500" in error_msg or "502" in error_msg or "503" in error_msg:
                     wait_time = config.RETRY_DELAY * (config.RETRY_BACKOFF ** attempt)
-                    logger.warning(
-                        f"Server error, retrying in {wait_time:.1f}s "
-                        f"(attempt {attempt+1}/{config.MAX_RETRIES})"
-                    )
+                    logger.warning(f"Server error, retrying in {wait_time}s (attempt {attempt+1}/{config.MAX_RETRIES})")
                     time.sleep(wait_time)
                     continue
-
-                # Other errors - retry with backoff
-                if attempt < config.MAX_RETRIES - 1:
-                    wait_time = config.RETRY_DELAY * (config.RETRY_BACKOFF ** attempt)
-                    logger.warning(
-                        f"API error: {error_msg}. Retrying in {wait_time:.1f}s... "
-                        f"(attempt {attempt+1}/{config.MAX_RETRIES})"
-                    )
-                    time.sleep(wait_time)
+                
+                # Check if it's invalid token (don't retry)
+                elif "Invalid" in error_msg and "token" in error_msg.lower():
+                    logger.error("Invalid access token - please re-authenticate")
+                    raise
+                
+                # Other errors
                 else:
-                    logger.error(f"API call failed after {config.MAX_RETRIES} attempts: {error_msg}")
-                    # Raise with the classified error type
-                    raise error_class(f"API call failed: {error_msg}") from e
-
-        # This should never be reached, but just in case
-        raise KiteAPIError(f"API call failed after {config.MAX_RETRIES} retries") from last_exception
+                    if attempt < config.MAX_RETRIES - 1:
+                        wait_time = config.RETRY_DELAY * (config.RETRY_BACKOFF ** attempt)
+                        logger.warning(f"API error: {error_msg}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"API call failed after {config.MAX_RETRIES} attempts: {error_msg}")
+                        raise
+        
+        raise Exception(f"API call failed after {config.MAX_RETRIES} retries")
     
     def fetch_historical_data(
         self,
@@ -234,22 +146,18 @@ class KiteClient:
     ) -> List[Dict]:
         """
         Fetch historical data for a single instrument
-
+        
         Args:
             instrument_token: Kite instrument token
             from_date: Start date (inclusive)
             to_date: End date (inclusive)
             interval: Timeframe (minute, 15minute, 60minute, day)
-
+        
         Returns:
-            List of OHLCV dicts (guaranteed chronologically ordered, earliest to latest)
-
-        Note:
-            This method validates and enforces chronological ordering.
-            Downstream code assumes data[0] is the earliest and data[-1] is the latest.
+            List of OHLCV dicts
         """
         logger.info(f"Fetching {interval} data for token {instrument_token} ({from_date.date()} to {to_date.date()})")
-
+        
         try:
             data = self._make_api_call(
                 self.kite.historical_data,
@@ -260,42 +168,14 @@ class KiteClient:
                 continuous=False,
                 oi=False
             )
-
+            
             if not data:
                 logger.warning(f"No data returned for token {instrument_token}")
                 return []
-
-            # Validate chronological ordering
-            if len(data) >= 2:
-                # Check if data is already sorted
-                is_ascending = all(
-                    data[i]['date'] <= data[i + 1]['date']
-                    for i in range(len(data) - 1)
-                )
-                is_descending = all(
-                    data[i]['date'] >= data[i + 1]['date']
-                    for i in range(len(data) - 1)
-                )
-
-                if not is_ascending and not is_descending:
-                    # Data is not consistently ordered - need to sort
-                    logger.warning(
-                        f"API returned data in random order! Sorting chronologically. "
-                        f"(first={data[0]['date']}, last={data[-1]['date']})"
-                    )
-                    data = sorted(data, key=lambda x: x['date'])
-                elif is_descending and not is_ascending:
-                    # Data is descending - reverse it
-                    logger.warning(
-                        f"API returned descending order data! Reversing to chronological order. "
-                        f"(first={data[0]['date']}, last={data[-1]['date']})"
-                    )
-                    data = list(reversed(data))
-                # else: data is already ascending (is_ascending is True) - no action needed
-
+            
             logger.info(f"Fetched {len(data)} records")
             return data
-
+            
         except Exception as e:
             logger.error(f"Error fetching historical data: {e}")
             raise

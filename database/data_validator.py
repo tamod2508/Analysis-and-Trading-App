@@ -5,7 +5,6 @@ High-level validation for API responses with detailed feedback
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass
-import logging
 import traceback
 import numpy as np
 import pandas as pd
@@ -28,9 +27,9 @@ from database.schema import (
     ValidationRules,
     OptionsValidationRules,
 )
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
-logger.setLevel(config.LOG_LEVEL)
+logger = get_logger(__name__, 'validator.log')
 
 
 @dataclass

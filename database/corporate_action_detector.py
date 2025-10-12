@@ -6,9 +6,7 @@ Since NSE/BSE have 20% daily limits, >20% changes might indicate corporate actio
 from datetime import datetime
 from typing import List, Dict, Optional
 import json
-import logging
 import pandas as pd
-
 
 from config import (
     config,
@@ -19,8 +17,9 @@ from config import (
     CA_HIGH_CONFIDENCE_THRESHOLD,
     CA_MEDIUM_CONFIDENCE_THRESHOLD,
 )
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, 'database.log')
 
 
 class CorporateActionDetector:

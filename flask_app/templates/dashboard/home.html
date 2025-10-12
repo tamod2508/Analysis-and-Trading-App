@@ -64,8 +64,8 @@
                 Database Overview
             </h2>
 
-            <div class="grid grid-cols-2 gap-3">
-                {% for segment_name in ['EQUITY', 'DERIVATIVES'] %}
+            <div class="grid grid-cols-3 gap-3">
+                {% for segment_name in ['EQUITY', 'DERIVATIVES', 'FUNDAMENTALS'] %}
                     {% set data = db_stats[segment_name] %}
                     {% set is_active = data.is_active %}
 
@@ -97,6 +97,7 @@
                                 <div class="secondary-text" style="font-size: 0.75rem; margin-bottom: 0.25rem;">
                                     {% if segment_name == 'EQUITY' %}NO. OF STOCKS
                                     {% elif segment_name == 'DERIVATIVES' %}NO. OF CONTRACTS
+                                    {% elif segment_name == 'FUNDAMENTALS' %}NO. OF COMPANIES
                                     {% else %}NO. OF INSTRUMENTS{% endif %}
                                 </div>
                                 <div style="color: var(--color-text-primary); font-size: 1.25rem; font-weight: 600;">{{ data.total_symbols | format_number }}</div>

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bulk Fundamental Data Downloader
-Downloads fundamental data for all NSE/BSE companies
+Downloads fundamental data from EODHD API and writes to QuestDB
 """
 
 import os
@@ -9,14 +9,15 @@ import sys
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, Dict
 from dotenv import load_dotenv
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from financial_data_fetcher import EODHDClient, FundamentalsParser
-from database.fundamentals_manager import FundamentalsManager
+from database2.client import QuestDBClient
+from financial_data_fetcher.storage import FundamentalsWriter
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +37,8 @@ class BulkDownloader:
     Bulk downloader for fundamental data
 
     Features:
+    - Fetches from EODHD API
+    - Writes to QuestDB
     - Resume capability (skip already downloaded companies)
     - Progress tracking
     - Error handling
@@ -50,7 +53,11 @@ class BulkDownloader:
             api_key: EODHD API key
         """
         self.eodhd = EODHDClient(api_key)
-        self.manager = FundamentalsManager()
+        self.questdb_client = QuestDBClient()
+        self.questdb_writer = FundamentalsWriter(self.questdb_client)
+
+        logger.info("✅ QuestDB writer initialized")
+
         self.stats = {
             'total': 0,
             'success': 0,
@@ -74,7 +81,7 @@ class BulkDownloader:
             exchange: NSE or BSE
             start_index: Start from this index (for resume)
             max_companies: Max companies to download (None = all)
-            skip_existing: Skip companies already in database
+            skip_existing: Skip companies already in QuestDB
         """
         logger.info("="*70)
         logger.info("BULK DOWNLOAD STARTED")
@@ -84,7 +91,7 @@ class BulkDownloader:
         logger.info(f"Max Companies: {max_companies or 'All'}")
         logger.info(f"Skip Existing: {skip_existing}")
 
-        # Get all symbols
+        # Get all symbols from EODHD
         logger.info(f"\nFetching symbol list from {exchange}...")
         symbols_list = self.eodhd.get_exchange_symbols(exchange)
 
@@ -106,8 +113,14 @@ class BulkDownloader:
         # Get existing companies if skip_existing
         existing_companies = set()
         if skip_existing:
-            existing_companies = set(self.manager.list_companies(exchange))
-            logger.info(f"📋 {len(existing_companies)} companies already in database")
+            try:
+                result = self.questdb_client.execute_query(
+                    f"SELECT DISTINCT symbol FROM fundamentals_balance_sheet WHERE exchange = '{exchange}'"
+                )
+                existing_companies = {row[0] for row in result}
+                logger.info(f"📋 {len(existing_companies)} companies already in QuestDB")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not check existing companies: {e}")
 
         # Process each company
         start_time = datetime.now()
@@ -150,7 +163,7 @@ class BulkDownloader:
         logger.info(f"⏭️  Skipped: {self.stats['skipped']}")
         logger.info(f"⚠️  No Data: {self.stats['no_data']}")
         logger.info(f"❌ Failed: {self.stats['failed']}")
-        logger.info(f"⏱️  Duration: {duration/60:.1f} minutes")
+        logger.info(f"\n⏱️  Duration: {duration/60:.1f} minutes")
         logger.info(f"⚡ Speed: {self.stats['total']/(duration/60):.1f} companies/min")
 
         # Show errors
@@ -159,11 +172,16 @@ class BulkDownloader:
             for error in self.stats['errors'][:10]:  # Show first 10
                 logger.info(f"  - {error}")
 
-        # Database stats
-        db_stats = self.manager.get_statistics()
-        logger.info(f"\n📊 Database Statistics:")
-        logger.info(f"  Total Companies: {db_stats['total_companies']}")
-        logger.info(f"  File Size: {db_stats['file_size_mb']:.2f} MB")
+        # QuestDB stats
+        try:
+            result = self.questdb_client.execute_query(
+                f"SELECT COUNT(DISTINCT symbol) FROM fundamentals_balance_sheet WHERE exchange = '{exchange}'"
+            )
+            total_companies = result[0][0] if result else 0
+            logger.info(f"\n📊 QuestDB Statistics:")
+            logger.info(f"  Total Companies ({exchange}): {total_companies}")
+        except Exception as e:
+            logger.warning(f"Could not fetch QuestDB stats: {e}")
 
         logger.info("="*70)
 
@@ -194,26 +212,85 @@ class BulkDownloader:
                 self.stats['no_data'] += 1
                 return False
 
-            # Store
-            success = self.manager.save_company_fundamentals(
-                exchange,
-                symbol,
-                parsed,
-                overwrite=True
-            )
+            # Write to QuestDB
+            try:
+                questdb_results = self._save_to_questdb(exchange, symbol, parsed)
+                success_count = sum(1 for v in questdb_results.values() if v)
+                total_count = len(questdb_results)
 
-            if success:
-                logger.info(f"  ✅ Saved {name}")
-                return True
-            else:
-                logger.error(f"  ❌ Failed to store")
-                self.stats['errors'].append(f"{symbol}: Storage failed")
+                if success_count == total_count:
+                    logger.info(f"  ✅ Saved to QuestDB ({success_count}/{total_count} datasets)")
+                    logger.info(f"  ✅ Saved {name}")
+                    return True
+                else:
+                    failed_datasets = [k for k, v in questdb_results.items() if not v]
+                    logger.warning(f"  ⚠️ Partial save ({success_count}/{total_count}, failed: {', '.join(failed_datasets)})")
+                    return success_count > 0  # Partial success
+
+            except Exception as e:
+                logger.error(f"  ❌ Failed to save to QuestDB: {e}")
+                self.stats['errors'].append(f"{symbol}: QuestDB storage failed - {e}")
                 return False
 
         except Exception as e:
             logger.error(f"  ❌ Error: {e}")
             self.stats['errors'].append(f"{symbol}: {str(e)}")
             return False
+
+    def _save_to_questdb(self, exchange: str, symbol: str, parsed: Dict) -> Dict[str, bool]:
+        """
+        Save parsed fundamentals to QuestDB
+
+        Args:
+            exchange: NSE or BSE
+            symbol: Company symbol
+            parsed: Parsed fundamentals data from FundamentalsParser.parse_all()
+
+        Returns:
+            Dict with success status for each dataset
+        """
+        # Convert NumPy arrays to list of dicts for QuestDB
+        def numpy_to_dicts(np_array):
+            if np_array is None or len(np_array) == 0:
+                return []
+            result = []
+            for row in np_array:
+                record = {}
+                for field_name in row.dtype.names:
+                    value = row[field_name]
+                    # Convert bytes to string
+                    if isinstance(value, bytes):
+                        value = value.decode('utf-8')
+                    # Convert NumPy types to Python types
+                    elif hasattr(value, 'item'):
+                        value = value.item()
+                    record[field_name] = value
+                result.append(record)
+            return result
+
+        # Prepare data for QuestDB
+        balance_sheet_yearly = numpy_to_dicts(parsed.get('balance_sheet_yearly'))
+        balance_sheet_quarterly = numpy_to_dicts(parsed.get('balance_sheet_quarterly'))
+        income_statement_yearly = numpy_to_dicts(parsed.get('income_statement_yearly'))
+        income_statement_quarterly = numpy_to_dicts(parsed.get('income_statement_quarterly'))
+        cash_flow_yearly = numpy_to_dicts(parsed.get('cash_flow_yearly'))
+        cash_flow_quarterly = numpy_to_dicts(parsed.get('cash_flow_quarterly'))
+        general_info = parsed.get('general', {})
+        highlights = parsed.get('highlights', {})
+
+        # Write to QuestDB
+        return self.questdb_writer.insert_all_fundamentals(
+            symbol=symbol,
+            exchange=exchange,
+            balance_sheet_yearly=balance_sheet_yearly,
+            balance_sheet_quarterly=balance_sheet_quarterly,
+            income_statement_yearly=income_statement_yearly,
+            income_statement_quarterly=income_statement_quarterly,
+            cash_flow_yearly=cash_flow_yearly,
+            cash_flow_quarterly=cash_flow_quarterly,
+            general_info=general_info,
+            highlights=highlights
+        )
 
     def _print_progress_summary(self):
         """Print progress summary"""
@@ -230,7 +307,7 @@ def main():
     """Main entry point"""
 
     print("\n" + "="*70)
-    print("BULK FUNDAMENTAL DATA DOWNLOADER")
+    print("BULK FUNDAMENTAL DATA DOWNLOADER (QuestDB)")
     print("="*70)
 
     # Load API key
@@ -261,6 +338,7 @@ def main():
     print(f"Start Index: {start_index}")
     print(f"Max Companies: {max_companies or 'All'}")
     print(f"Skip Existing: {skip_existing}")
+    print(f"Target Database: QuestDB")
     print("="*70)
 
     confirm = input("\nProceed? (y/n) [y]: ").strip().lower()
